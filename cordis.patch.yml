@@ -1,0 +1,5 @@
+- insert:
+    - id: seed-of-memory
+      name: dsh-seed-of-memory
+      config:
+        enabled: true
