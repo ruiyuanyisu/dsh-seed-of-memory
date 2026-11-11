@@ -1,5 +1,9 @@
 # Seed of Memory（记忆之种）
 
+[![npm version](https://img.shields.io/npm/v/dsh-seed-of-memory.svg)](https://www.npmjs.com/package/dsh-seed-of-memory)
+[![license](https://img.shields.io/npm/l/dsh-seed-of-memory.svg)](./LICENSE)
+[![DSH](https://img.shields.io/badge/DSH-%E2%89%A50.2.0--rc.1-4f46e5)](https://github.com/deepseek-ai/dsh)
+
 > 给 DSH 的一套本地记忆层：根、记忆、认知、情绪、人格、说话习惯。换会话、换模型、换宿主，它都还在。
 
 Seed of Memory is a local-first memory plugin for **DeepSeek Harness (DSH)**. It keeps a durable identity root, layered memories, beliefs, emotions, a mood line, and a slowly-growing persona + speaking style — all in one SQLite file on your machine. No network calls, no external services.

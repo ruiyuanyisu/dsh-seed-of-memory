@@ -28,6 +28,17 @@
   ],
   "license": "MIT",
   "author": "Seed of Memory contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ruiyuanyisu/dsh-seed-of-memory.git"
+  },
+  "homepage": "https://github.com/ruiyuanyisu/dsh-seed-of-memory#readme",
+  "bugs": {
+    "url": "https://github.com/ruiyuanyisu/dsh-seed-of-memory/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.19",
     "dsh": ">=0.2.0-rc.1 <0.3.0"
