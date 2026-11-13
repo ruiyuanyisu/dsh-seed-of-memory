@@ -1,6 +1,6 @@
 {
   "name": "dsh-seed-of-memory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": false,
   "description": "Local-first memory layer for DeepSeek Harness: identity root, layered memories, beliefs, emotions, persona and speaking habits in one SQLite file.",
   "type": "module",
@@ -11,6 +11,7 @@
   },
   "files": [
     "lib",
+    "docs",
     "cordis.patch.yml",
     "README.md",
     "SPEC.md",

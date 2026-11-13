@@ -465,4 +465,16 @@ embeddings(ref_type, ref_id, model_space, dim, vec BLOB, text_hash, created_at)
 - 面板与路由：`GET /dsh-seed-of-memory/voice`（30 秒缓存，`?refresh=1` 强制重探）返回能力 + `pluginManager` 里 `dsh-voice` 的安装/启用状态 + `mode`（`full` / `voice-out` / `voice-in` / `text`）；「QQ」页语音卡片可「重新检测」。
 - 边界：探测失败只降级，不抛错；不因为对方没装语音就拒绝收文字；TTS 探活不合成音频、不写盘。
 
+## 30. 面板「说明」页（v1.1）
+
+**目标**：让拿到插件的人不翻 README 也能装、能配、能排错。
+
+- 原文：`docs/GUIDE.md`（随包发布，`files` 里包含 `docs`），`lib/index.js` 启动时 `readFileSync(new URL('../docs/GUIDE.md', import.meta.url))` 读一次缓存为 `GUIDE_TEXT`；读不到就返回空串，不影响插件启动。
+- 路由：`GET /dsh-seed-of-memory/guide` → `{ markdown, version }`；`version` 取 `package.json`（`PKG_VERSION`）；未带凭据由 `connection.requestRejection` 拦成 401。
+- 客户端：`lib/client.js` 的 `GuideView` 用轻量 Markdown 渲染（`guideBlocks`）：`# / ## / ###` 标题、`- ` 列表、``` 代码块、行内 `` ` ``；不引入第三方解析器，随社区 UI 一起加载。
+- 页签顺序：概览、记忆、认知、人格、情绪、检索、B站、QQ、根、说明。
+- 说明内容覆盖：安装与升级、数据目录、离线资源（运行时 / 语音模型 / 迅雷）、每一页做什么、工具速查、配置项、`qq.json` 示例、主动消息与群聊规则、语音降级、常见问题。
+- 边界：说明只是文本，不执行任何操作；`docs` 不参与构建，改 Markdown 不需要重启宿主（刷新页面即可，`GUIDE_TEXT` 在插件重载时更新）。
+
+
 
