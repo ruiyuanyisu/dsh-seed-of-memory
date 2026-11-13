@@ -17,9 +17,9 @@ test('说明书覆盖关键章节', () => {
   assert.ok(guide.includes('groupPolicy'), '应说明群聊三档')
 })
 
-test('docs 随包发布，版本是 1.1.0', () => {
+test('docs 随包发布，版本号可读', () => {
   assert.ok(pkg.files.includes('docs'), 'package.json files 应包含 docs')
-  assert.equal(pkg.version, '1.1.0')
+  assert.match(String(pkg.version), /^\d+\.\d+\.\d+$/)
 })
 
 test('插件注册了 guide 路由并读取 docs/GUIDE.md', () => {

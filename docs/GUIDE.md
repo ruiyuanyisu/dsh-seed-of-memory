@@ -74,6 +74,8 @@
 
 ## QQ
 
+可选。**不需要 SurfCore**：Seed 自己就能接任意 OneBot 11 实现（SnowLuma / NapCat / Lagrange），只要填对 `wsUrl`、`httpUrl`、`token` 和黑白名单。不接 QQ 也没关系，其他功能不受影响。
+
 `qq.json` 长这样（放在数据目录）：
 
 ```json
@@ -81,7 +83,7 @@
   "enabled": true,
   "wsUrl": "ws://127.0.0.1:3001",
   "httpUrl": "http://127.0.0.1:3000",
-  "token": "你的 OneBot token",
+  "accessToken": "你的 OneBot token",
   "allowPrivate": ["你的QQ号"],
   "allowGroups": ["群号"],
   "cwd": "E:\\cz",
@@ -98,6 +100,8 @@
 - `cwd`：QQ 会话的工作目录
 
 **主动消息**：按心情决定要不要找你。担心、想你、有点空、想分享，四种开口理由；23:00–08:00 安静，至少隔 4 小时，每天最多 3 次。目标写在 `proactive.target`，格式 `private:<QQ号>` 或 `group:<群号>`。
+
+**只听不回（和 SurfCore 桥共存）**：`"autoReply": false` 时 Seed 仍连着 SnowLuma、仍记下你最后说话的时间，但不建会话、不回消息（日志写 `observe`）；主动消息照常发。面板「QQ」页有勾选。想让 Seed 接管聊天就设回 `true`，同时关掉桥，别双回。
 
 **群聊**：`groupPolicy` 三档：
 

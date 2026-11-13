@@ -201,3 +201,45 @@ test('/reset 会重开会话并回一句', async () => {
   assert.equal(client.calls.length, 1)
   assert.match(client.calls[0].params.message[0].data.text, /重新开始/)
 })
+
+test('autoReply=false 只听不回：记下来说话时间，但不建会话', async () => {
+  const agents = fakeAgents()
+  const { channel, client } = makeChannel({ config: { autoReply: false }, agents })
+  const ev = {
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 101,
+    message: [{ type: 'text', data: { text: '在吗' } }],
+  }
+  await channel.handleEvent(ev)
+  assert.equal(agents.created.length, 0)
+  assert.equal(client.calls.length, 0)
+  assert.ok(channel.lastInboundAt > 0)
+  assert.equal(channel.status().autoReply, false)
+  assert.ok(channel.entries.some((line) => line.kind === 'observe'))
+})
+
+test('autoReply 默认开启', () => {
+  assert.equal(QqChannel.defaults().autoReply, true)
+})
+test('只听不回时，群里别人闲聊不算「他说话了」', async () => {
+  const { channel } = makeChannel({ config: { autoReply: false } })
+  const groupEv = (text, id) => ({
+    post_type: 'message',
+    message_type: 'group',
+    group_id: 123456,
+    self_id: 10000,
+    user_id: 20002,
+    message_id: id,
+    message: [{ type: 'text', data: { text } }],
+  })
+  await channel.handleEvent(groupEv('随便聊聊', 201))
+  assert.equal(channel.lastInboundAt, 0)
+
+  const atEv = groupEv('@我 在吗', 202)
+  atEv.message = [{ type: 'at', data: { qq: '10000' } }, { type: 'text', data: { text: ' 在吗' } }]
+  await channel.handleEvent(atEv)
+  assert.ok(channel.lastInboundAt > 0)
+})
