@@ -169,15 +169,21 @@ pnpm add dsh-seed-of-memory
 
 **不装 SurfCore 也完全能用**：Seed 自己就能回消息，只要有一个 OneBot 11 实现（SnowLuma、NapCat、Lagrange 都行）。SurfCore 只是另一种玩法——如果你已经用它的桥管 QQ，就让桥回、Seed 只听（见下面「只听不回」）。完全不接 QQ 也可以，记忆和面板照常。
 
-如果你在用 SnowLuma 把本机 QQ 号挂成 OneBot 11，可以让 Seed of Memory 直接接管消息：**QQ 私聊/群聊会变成一颗正常的 Agent 会话**，所以根、记忆卡、人格、心情、自动捕获全都在，和 Web 里说话没有区别。
+如果你在用 SnowLuma 把本机 QQ 号挂成 OneBot 11，可以让 Seed of Memory 直接接管消息：**QQ 私聊/群聊会变成一颗正常的 Agent 会话**，所以根、记忆卡、人格、心情、自动捕获全都在，和 Web 里说话没有区别。Seed 自己就是桥——不需要再装一份 SurfCore。
 
-1. 面板「QQ」页填 `ws://127.0.0.1:3001`、`http://127.0.0.1:3000`、SnowLuma 的 `accessToken`，填允许的私聊 QQ / 群号（`*` 表示全部），保存。
-2. 点「连接」。连上后，在 QQ 里发给白名单里的人/群一句话即可。
-3. 群里默认要 @ 才回；发 `/reset` 可以丢掉旧会话重新开始。
+### 第一次接 QQ（不用 SurfCore）
+
+1. 下载 **SnowLuma**（自带 Node，解压即用），双击 `launcher.bat` 启动。
+2. 浏览器打开 `http://127.0.0.1:5099`，扫码登录要挂机的 QQ 号。
+3. SnowLuma → 设置 → **OneBot 11**：打开 HTTP `3000` 与 WebSocket `3001`，两边填同一个 `accessToken`。
+4. 面板「QQ」页填 `ws://127.0.0.1:3001`、`http://127.0.0.1:3000`、这个 token，填允许的私聊 QQ / 群号（`*` 表示全部），保存。
+5. 点「检测连接」——面板会逐步告诉你卡在哪：SnowLuma 没启动 / QQ 没登录 / 端口没开 / 白名单没填 / 连接没建立。
+
+连上后，在 QQ 里发给白名单里的人/群一句话即可；群里默认要 @ 才回（也可开「群聊判断」让它看情况接话），发 `/reset` 可以丢掉旧会话重新开始。回复会像真人一样按句子分成 1–3 条、中间隔一秒左右（`qq.json` 的 `burstMax` / `burstGapMs` 可调）。
 
 注意：
 
-- **同一个 SnowLuma 账号同时只能有一个桥回话。** 如果 SurfCore 的 bridge 也连着它，会双回复；启用本通道前先关掉 SurfCore 的 QQ agent，或换一个账号。
+- **同一个 SnowLuma 账号同时只能有一个桥回话。** 如果还开着别的桥（比如 SurfCore 的 bridge），会双回复；启用本通道前先停掉它，或换一个账号。
 - 配置存在 `<数据目录>/qq.json`（默认 `~/.dsh/seed-of-memory/qq.json`），token 在面板里只显示前后各 4 位。
 - QQ 通道默认关闭（`enabled: false`），面板点过「连接」才会持久化开启。
 
@@ -276,8 +282,9 @@ qq.json 里可以显式指定 provider / model / reasoningEffort；不填会跟�
 | 想分享 | 心情好（valence ≥ 0.3、arousal ≥ 0.45），且 3 小时没说话 | 「今天有件小事让我挺开心……」 |
 
 - 安静时段（默认 23:00–08:00）不说；两次之间至少隔 4 小时；一天最多 3 次。
+- **先填「主人 QQ」**：面板「QQ」页 → 主动找主人 → 填你的 QQ 号，保存。主动消息就发给你（`private:<QQ号>`）；没填就不发。填了之后这个号也会自动进私聊白名单。
 - 文案会带一句真实的记忆（最近 30 条里随机挑一条截 36 字），不是模板群发。
-- 默认不指定对象（`target` 为空就不发）；在 `qq.json` 里填 `"proactive": { "target": "private:10001" }`（换成自己的 QQ 号），也可以在面板「QQ」页改开关、冷却、上限、安静时段，点「现在说一句」立刻试。
+- 也可以在 `qq.json` 里写 `"ownerQQ": "10001"`，或旧写法 `"proactive": { "target": "private:10001" }`（`ownerQQ` 优先）；面板「QQ」页还能改开关、冷却、上限、安静时段，点「现在说一句」立刻试。
 - 状态在 `<stateDir>/qq-proactive.json`；发送记录写进 `qq.log`（`proactive`）。
 - 聊天里也能用：`/seed proactive` 看现在会不会开口，`/seed proactive say` 立刻说一句。
 - 默认不读 `qqConfig.enabled` 之外的东西；QQ 没连上时什么都不做。

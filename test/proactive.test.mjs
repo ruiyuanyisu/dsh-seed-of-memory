@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { planProactive, proactiveText, inQuietHours, PROACTIVE_DEFAULTS } from '../lib/qq/proactive.js'
+import { planProactive, proactiveText, inQuietHours, ownerTarget, normalizeOwnerQQ, PROACTIVE_DEFAULTS } from '../lib/qq/proactive.js'
 
 const NOON = new Date(2026, 10, 13, 14, 0, 0).getTime()
 const hourAgo = (h) => NOON - h * 3_600_000
@@ -94,3 +94,27 @@ test('文案带一点具体的事，且四种都不一样', () => {
   assert.equal(new Set(texts).size, 4)
   assert.equal(proactiveText('none'), '')
 })
+
+test('长记忆不硬切在句子中间，也不出现「…。。」', () => {
+  const memory = 'E:\\Carys 盘是 exFAT（THUNDEROBOT USB 确认），所以他一直想换一块更稳的盘，但暂时不想折腾。'
+  const text = proactiveText('miss', { memory })
+  assert.ok(text.includes('…'))
+  assert.doesNotMatch(text, /…。/)
+})
+
+test('主人 QQ 优先，没填才用自定义对象', () => {  assert.equal(ownerTarget({ ownerQQ: '2285450525' }), 'private:2285450525')
+  assert.equal(ownerTarget({ ownerQQ: ' 2285450525 ', target: 'group:123456' }), 'private:2285450525')
+  assert.equal(ownerTarget({ ownerQQ: '', target: 'private:10001' }), 'private:10001')
+  assert.equal(ownerTarget({ ownerQQ: 'abc', target: '' }), '')
+  assert.equal(ownerTarget({}), '')
+})
+
+test('QQ 号里的空格、横线会被滤掉，太短或太长当没填', () => {
+  assert.equal(normalizeOwnerQQ(' 228 5450 525 '), '2285450525')
+  assert.equal(normalizeOwnerQQ('228-5450-525'), '2285450525')
+  assert.equal(normalizeOwnerQQ('1234'), '')
+  assert.equal(normalizeOwnerQQ('1234567890123'), '')
+  assert.equal(normalizeOwnerQQ('qq2285450525'), '2285450525')
+  assert.equal(normalizeOwnerQQ(null), '')
+})
+

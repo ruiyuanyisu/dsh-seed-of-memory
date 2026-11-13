@@ -478,3 +478,28 @@ embeddings(ref_type, ref_id, model_space, dim, vec BLOB, text_hash, created_at)
 
 
 
+
+## 31. 内置 QQ 桥与首次接入向导（v1.2）
+
+Seed 自己就是桥：不需要额外跑 SurfCore 的 bridge。
+
+- 接入步骤（\GET /dsh-seed-of-memory/qq/onboarding\ 会逐步检测）：
+  1. SnowLuma 已启动（本机 3000/3001 至少一个在监听）；
+  2. QQ 已登录（用 \qq.json\ 的 accessToken 调 HTTP \get_login_info\，拿到昵称/uin）；
+  3. OneBot 的 HTTP 与 WebSocket 端口都开着；
+  4. 白名单非空（\llowPrivate\ 或 \llowGroups\）；
+  5. 通道 \status.connected\ 为真。
+- 探测都是只读：TCP 握手 + 一次 \get_login_info\，不会发消息、不改配置。
+- 回复气泡：\splitBubbles(text, max=3, size=90)\ 按句号/换行拆句、贪心合成不超过 size 的组，最多 max 条（多出的并进最后一条）；\#send\ 在条与条之间等 \urstGapMs\（默认 900ms，带 ±30% 抖动），\"burst": false\ 退回原来的整段/1200 字分条。
+- 面板「QQ」页顶部卡片显示五步清单与「检测连接」，下一步未完成时列出具体提示。
+
+## 32. 主人 QQ（v1.2.1）
+
+主动消息发给谁，不再要求手写 `private:<QQ号>`：面板里有「主人 QQ」一栏。
+
+- 配置：`qq.json` 新增 `ownerQQ`；`lib/qq/proactive.js` 导出纯函数 `ownerTarget({ ownerQQ, target })`——先把 `ownerQQ` 去掉非数字，长度 5–12 才用，返回 `private:<QQ号>`；否则回落到旧的 `proactive.target`（必须匹配 `private|group:<5–12 位数字>`）；都没有返回空串。
+- 发送：`proactiveTick` 开头先算 target，为空直接返回 `{ sent: false, reason: '还没填主人 QQ' }`；「现在说一句」同样受这一条约束。
+- 面板：「QQ」页主动卡新增「主人 QQ」输入（`inputMode=numeric`），保存走 `POST /dsh-seed-of-memory/qq/config` 或 `/qq/proactive`（两个路由都接受 `ownerQQ`），旁边实时显示生效的 `target`。
+- 接口：面板状态、`GET /qq/proactive`、`POST /qq/proactive` 都返回 `target`，便于排查「为什么没发」。
+- 边界：`ownerQQ` 里的空格、横线等非数字字符会被过滤；长度不在 5–12 时忽略本次输入；不改白名单——要收到他的消息，`allowPrivate` 仍需包含这个号。
+

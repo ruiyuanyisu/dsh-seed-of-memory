@@ -1,3 +1,23 @@
+## 1.2.1 — 2026-11-13
+
+主动找主人先认「主人 QQ」。
+
+- `qq.json` 新增 `ownerQQ`；面板「QQ」页 → 主动找主人，多了一个「主人 QQ」输入框和「发给 private:<QQ号>」提示。
+- `ownerTarget({ ownerQQ, target })`：填了 `ownerQQ` 就发给他，没填才回落到旧的 `proactive.target`；两样都空就不发（返回「还没填主人 QQ」）。
+- 面板状态、`GET/POST /qq/proactive` 都返回生效的 `target`。
+- 填了「主人 QQ」会顺手把它加进 `allowPrivate`，免得他发消息却被白名单挡掉。
+- 带记忆的句子不再硬切到半句：能停在标点就停在标点，也不会出现「…。。」。
+- 测试：`proactive.test.mjs` 增 3 项（ownerQQ 优先/回落、号码清洗、截短断句），`qq.test.mjs` 增 2 项（用假 OneBot 客户端验证 `private:<QQ>` 真的发到私聊、空目标不乱发），全量 161 项通过。
+
+## 1.2.0 — 2026-11-13
+
+Seed 自己就是 QQ 桥：不再需要额外跑一份 SurfCore。
+
+- 面板「QQ」页新增「第一次接 QQ」向导：SnowLuma 启动 / QQ 登录 / OneBot 端口 / 白名单 / 连接状态，逐步检测并提示下一步；新增 `GET /dsh-seed-of-memory/qq/onboarding`。
+- 回复改成真人式分条：按句子拆成 1–4 条气泡、条间隔 0.9 秒左右（`burstMax`、`burstGapMs`，`"burst": false` 可关）；`splitBubbles` 导出并有测试。
+- README / 说明页补了「不用 SurfCore 的第一次接 QQ」教程；「只听不回」的文案改成「聊天交给别的桥」。
+- 测试：全量 156 项通过。
+
 ## 1.1.1 — 2026-11-13
 
 和 SurfCore 的 QQ 桥共存：Seed 可以「只听不回」。

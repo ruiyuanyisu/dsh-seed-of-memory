@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
-import { QqChannel } from '../lib/qq/channel.js'
+import { QqChannel, splitBubbles } from '../lib/qq/channel.js'
+import { ownerTarget } from '../lib/qq/proactive.js'
 import { segmentsOf, textOf, mentionedSelf, fallbackUserMessage } from '../lib/qq/message.js'
 
 class FakeClient extends EventEmitter {
@@ -242,4 +243,49 @@ test('只听不回时，群里别人闲聊不算「他说话了」', async () =>
   atEv.message = [{ type: 'at', data: { qq: '10000' } }, { type: 'text', data: { text: ' 在吗' } }]
   await channel.handleEvent(atEv)
   assert.ok(channel.lastInboundAt > 0)
+})
+test('splitBubbles：按句号拆成多条，最多 max 条，剩下的并进最后一条', () => {
+  assert.deepEqual(splitBubbles('在。', 3), ['在。'])
+  const one = splitBubbles('今天吃了饭。然后去散步了。晚上看了会儿书。', 2, 10)
+  assert.equal(one.length, 2)
+  assert.ok(one[1].includes('晚上看了会儿书'))
+  const capped = splitBubbles('一。二。三。四。五。六。', 3, 3)
+  assert.equal(capped.length, 3)
+  assert.equal(capped.join(''), '一。二。三。四。五。六。')
+  assert.deepEqual(splitBubbles('没有句号的句子', 3), ['没有句号的句子'])
+  assert.deepEqual(splitBubbles('   ', 3), [])
+})
+
+test('ownerQQ 解析出的地址能真的走 say 发到私聊', async () => {
+  const client = new FakeClient()
+  client.connect()
+  const channel = new QqChannel({
+    client,
+    agents: {},
+    config: { ...QqChannel.defaults(), enabled: true, burst: false, voiceOut: 'off' },
+    logger: { warn() {}, error() {}, log() {} },
+  })
+  const target = ownerTarget({ ownerQQ: '2285450525' })
+  assert.equal(target, 'private:2285450525')
+  const ok = await channel.say(target, '测试一句')
+  assert.equal(ok, true)
+  assert.equal(client.calls.length, 1)
+  assert.equal(client.calls[0].action, 'send_private_msg')
+  assert.equal(client.calls[0].params.user_id, 2285450525)
+  assert.equal(client.calls[0].params.message[0].data.text, '测试一句')
+})
+
+test('没填主人 QQ、也没填 target 时 say 不会乱发', async () => {
+  const client = new FakeClient()
+  client.connect()
+  const channel = new QqChannel({
+    client,
+    agents: {},
+    config: { ...QqChannel.defaults(), enabled: true },
+    logger: { warn() {}, error() {}, log() {} },
+  })
+  const target = ownerTarget({ ownerQQ: '', target: '' })
+  assert.equal(target, '')
+  assert.equal(await channel.say(target, '不该发出去'), false)
+  assert.equal(client.calls.length, 0)
 })
