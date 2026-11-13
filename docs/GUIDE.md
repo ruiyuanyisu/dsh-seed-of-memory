@@ -19,6 +19,7 @@
   - `sources.json`：外部档案源
   - `bili-sync.json`：刷B站同步去重
   - `qq-proactive.json`：主动消息的节流状态
+  - `qq-history.json`：QQ 每个会话最近几轮（重启后接上话用，删了不影响记忆本体）
   - `anchors.md` / `self.md` / `us.md`：根、我是谁、我们之间
 
 ## 离线资源
