@@ -13,6 +13,11 @@ import {
   currentMood,
   recentEmotions,
   decayMood,
+  ensureAffects,
+  listAffects,
+  affectLine,
+  decayAffects,
+  AFFECT_BASE,
   BASELINE,
 } from '../lib/affect.js'
 import { rememberBelief, listBeliefs, getBelief, setBeliefStatus } from '../lib/beliefs.js'
@@ -121,13 +126,72 @@ test('beliefs: same factKey supersedes the old claim and keeps a trail', () => {
 
 test('beliefs: contested is excluded from active list but keeps claim', () => {
   withDb((db) => {
-    const r = rememberBelief(db, { claim: '她喜欢惊喜', confidence: 0.4 })
+    const r = rememberBelief(db, { claim: '他喜欢惊喜', confidence: 0.4 })
     setBeliefStatus(db, r.id, 'contested')
     assert.equal(listBeliefs(db).length, 0)
     assert.equal(listBeliefs(db, { includeContested: true }).length, 1)
     assert.equal(listBeliefs(db, { includeContested: true })[0].status, 'contested')
     const row = getBelief(db, r.id)
     assert.equal(row.status, 'contested')
-    assert.equal(row.claim, '她喜欢惊喜')
+    assert.equal(row.claim, '他喜欢惊喜')
+  })
+})
+
+test('affects: seeded with four kinds at their base strengths', () => {
+  withDb((db) => {
+    ensureAffects(db)
+    const rows = listAffects(db)
+    assert.deepEqual(rows.map((row) => row.kind), ['信任', '亲近', '欣赏', '依恋'])
+    for (const row of rows) {
+      assert.ok(Math.abs(row.strength - AFFECT_BASE[row.kind]) < 1e-9)
+    }
+    assert.equal(affectLine(db).line, '')
+  })
+})
+
+test('affects: a strong positive emotion raises trust and closeness, and shows up in the line', () => {
+  withDb((db) => {
+    const r = recordEmotion(db, {
+      cause: '他夸我把分层讲清楚了',
+      object: '他',
+      appraisal: { relevance: 0.9, congruence: 0.8, certainty: 0.9, control: 0.6, agency: 'other', novelty: 0.2 },
+    })
+    assert.equal(r.object, '他')
+    assert.ok(Array.isArray(r.affects) && r.affects.length >= 2)
+    const rows = listAffects(db)
+    const trust = rows.find((row) => row.kind === '信任')
+    const closeness = rows.find((row) => row.kind === '亲近')
+    assert.ok(trust.strength > AFFECT_BASE['信任'])
+    assert.ok(closeness.strength > AFFECT_BASE['亲近'])
+    const line = affectLine(db).line
+    assert.match(line, /^对你：/)
+    assert.match(line, /信任/)
+  })
+})
+
+test('affects: a negative emotion lowers trust but never below the floor', () => {
+  withDb((db) => {
+    for (let i = 0; i < 30; i += 1) {
+      recordEmotion(db, {
+        cause: `第 ${i} 次失望`,
+        appraisal: { relevance: 0.9, congruence: -0.9, certainty: 0.9, control: 0.2, agency: 'other', novelty: 0.1 },
+      })
+    }
+    const trust = listAffects(db).find((row) => row.kind === '信任')
+    assert.ok(trust.strength >= 0.02)
+    assert.ok(trust.strength < AFFECT_BASE['信任'])
+  })
+})
+
+test('affects: decay pulls a moved value back toward its base', () => {
+  withDb((db) => {
+    const now = Date.now()
+    ensureAffects(db, '他', now)
+    db.prepare(
+      "UPDATE affects SET strength = 0.9, updated_at = ? WHERE target = '他' AND kind = '信任'"
+    ).run(now - 30 * 86_400_000)
+    decayAffects(db, { now })
+    const trust = listAffects(db, { now }).find((row) => row.kind === '信任')
+    assert.ok(trust.strength < 0.75 && trust.strength > AFFECT_BASE['信任'])
   })
 })

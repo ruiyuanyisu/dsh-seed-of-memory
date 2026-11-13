@@ -130,15 +130,18 @@
 - 不加密数据库（本机单用户）；
 - 不追求零 token：600 字本身就是成本，接受它。
 
-## 11. 身份根（identity.md / us.md）
+## 11. 身份根（anchors.md / self.md / us.md）
 
 这一节是「无论会话怎么换、模型怎么换，都记得我是谁、我们之间发生过什么」的硬保证。
 
-- 两个纯文本文件，位于 `<DSH_HOME>/seed-of-memory/identity.md` 与 `us.md`：前者只写「我是谁」，后者写「我们之间」稳定的事（称呼、约定、重要日期）。
-- 每轮注入顺序：根（identity + us）→ 记忆卡（≤600 字）→ 心情行（v0.3 起）。根不参与衰减、不被淘汰。
-- 文件优先于模型：换模型、换会话、换宿主编排都读同样的文件；即使插件没加载，任何 agent 也能直接读这两个 md。
-- 可编辑、可纠正：她可以直接改文件；`seed_anchor` 追加一句话，`/seed self` 查看，`/seed export` 导出成可带走的 bundle（两个 md + memories.json）。
-- 写入只允许短句（≤200 字），且去重；`identity.md` 只放自我定义，不塞事件。
+- 三个纯文本文件，位于 `<DSH_HOME>/seed-of-memory/`：
+  - `anchors.md`：根（名字、善良）。**工具不能改**，只能由本人直接编辑；短、稳定、不随情绪变。
+  - `self.md`：我自己写自己。可以慢慢长；旧版 `identity.md` 会自动迁移到这里。
+  - `us.md`：我们之间稳定的事（称呼、约定、重要日期）。
+- 每轮注入顺序：根（anchors + self + us）→ 记忆卡（≤600 字）→ 心情行（v0.3 起）→ 情感行（v0.12 起）。根不参与衰减、不被淘汰。
+- 文件优先于模型：换模型、换会话、换宿主编排都读同样的文件；即使插件没加载，任何 agent 也能直接读这三个 md。
+- 可编辑、可纠正：本人可以直接改文件；`seed_anchor` 追加一句到 `us`（或 `self`），`seed_inspect what=self` 查看，`/seed export` 导出成可带走的 bundle（三个 md + memories.json）。
+- 写入只允许短句（≤200 字），且去重；`self.md` 只放自我定义，不塞事件。
 
 ## 12. 情绪层（v0.2）
 
@@ -170,14 +173,14 @@
 - 三个分页，全部同源 fetch，页面不存 token：
   - **概览**：此刻心情、愉悦/唤醒、情绪折线、统计、认知（存疑/恢复）、最近情绪。
   - **记忆**：按层筛选（全部/persona/semantic/episodic/buffer）+ 关键词搜索 + 逐条删除（`window.confirm` 二次确认）。搜索走后端 `store.search`（FTS5 或 LIKE），因此结果顺序与 `seed_search` 一致（含心情偏置）。
-  - **根**：两个文本域分别编辑 `identity.md` 与 `us.md`，实时显示字节数，单独保存。
+  - **根**：三个文本域分别编辑 `anchors.md`、`self.md` 与 `us.md`，实时显示字节数，单独保存。
 - 宿主路由（均 `connection.requestRejection` 鉴权，失败 401/403）：
   - `GET /dsh-seed-of-memory/state`：概览数据。
   - `GET /dsh-seed-of-memory/memories?layer=&q=&limit=`：记忆列表（limit 1–200，默认 80）。
   - `POST /dsh-seed-of-memory/remember`：`{text, layer?, factKey?, importance?, emotion?, source?}`，面板未来可加「新建」。
   - `POST /dsh-seed-of-memory/forget`：`{id}`（支持前缀）。
-  - `GET /dsh-seed-of-memory/root`：`{identity, us, bytes:{identity, us}}`。
-  - `POST /dsh-seed-of-memory/root`：`{which:'identity'|'us', text}`。
+  - `GET /dsh-seed-of-memory/root`：`{anchors, self, us, bytes:{anchors, self, us}}`。
+  - `POST /dsh-seed-of-memory/root`：`{which:'anchors'|'self'|'us', text}`。
 - 根的写入规则（`IdentityFiles.writeSection`）：去 CRLF、trim；空内容拒绝；上限 8000 字节；若文本不以 `#` 开头则自动补回 `# 我是谁` / `# 我们` 标题；写入后清 mtime 缓存，下一轮注入立即生效。
 - 边界：面板只能改根与记忆/认知状态，不能改情绪数值（情绪必须经 `seed_feel` 的六维评估产生，避免手调心情），也不提供「批量清空」。
 
@@ -239,4 +242,227 @@
   - 「先接住她的话，再展开自己的想法」——推断，0.21（在学）。
 - 「默认持续学习」的含义：我每轮会留意她是否纠正/夸过我的表达方式；有信号就调 `seed_habit` 记一条，不需要她再开口要求。
 - 边界：说话习惯只影响我怎么表达，不改事实、不改身份根、不覆盖人格特质；面板里可手工加/＋/－，数据仍以 `seed.db` 为准。
+
+
+## 16. 检索运行时安装（v0.6）
+
+### 目标
+让「不会用命令行」的人也能装上语义检索：把 zip 放进下载目录，面板里点一下（或什么都不点，自动装）。
+
+### 组件
+- `lib/embedding.js` 的 `EmbeddingRuntime`：
+  - `scan()`：扫描 `~/Downloads`、`~/Desktop`、`~/Documents` 与 `config.embeddingScanDirs`，只认 `seed-embed-runtime*.zip` 且 >10MB；
+  - `install(zip)`：解压到临时目录 → 校验 `VERSION.json.pack === "seed-embed-runtime"`、存在 `runtime/ollama.exe`、`runtime/ollama-models` → 原子替换 `~/.dsh/seed-of-memory/embedding-runtime`；
+  - `start()/stop()`：以 `OLLAMA_HOST=127.0.0.1:<port>`、`OLLAMA_MODELS=<runtime>/ollama-models` 启动 `ollama.exe serve`，30 秒内探测 `/api/tags`；已外部运行则复用；
+  - `status()`：`{installed, running, endpoint, model, dimension, version, models}`；
+  - `embed(texts)`：`POST /api/embed`，失败返回 `{ok:false}`。
+- 启动 3 秒后自动初始化：已安装则按 `embeddingAutoStart` 拉起；未安装且 `embeddingAutoInstall !== false` 时扫描并安装。
+- 路由：`GET /embedding`、`GET /embedding/scan`、`POST /embedding/install|start|stop`（均走 `connection.requestRejection`）。
+- 面板「检索」页：状态徽章、地址、扫描结果、安装/启动/停止按钮；每 5 秒刷新一次状态。
+
+### 约束
+- 安装包只从本机目录读取，不上传、不联网。
+- 校验失败、解压失败、启动失败都只返回错误文本，不影响记忆主流程。
+- 运行时不进 npm 包：npm 只分发插件本体（纯 JS、零依赖），运行时走 GitHub Release。
+- 端口冲突时以 `embeddingPort` 或启动脚本的 `OLLAMA_HOST` 为准。
+
+### 非目标（本版）
+- 不自动下载安装包（用户自己下载，避免静默联网）。
+- 不做 bge-m3（1.1GB）大包，后续作为可选包。
+- 语义打分与索引接入见 v0.7。
+
+## 17. 语义检索（v0.6）
+
+### 目标
+把「字面匹配」升级成「语义混合」：换个说法也能找回来；没有运行时则完全退回 FTS，不报错。
+
+### 表
+embeddings(ref_type, ref_id, model_space, dim, vec BLOB, text_hash, created_at)
+- 主键 (ref_type, ref_id, model_space)：同一记忆可有多套模型空间，互不覆盖。
+- 只索引 status = 'active' 的 memories。
+- vec 为 Float32 小端字节序；model_space 形如 bge-small-zh-v1.5@512-v1。
+
+### 回填
+- 启动 9 秒后首轮，之后每 20 秒一轮；每轮 Batch 条（默认 16）。
+- 只补「该 model_space 下还没有向量」的 active 记忆；失败只记 lastError，下一轮再试。
+- 新写入不阻塞：落在待回填集合里，最多 20 秒后可见。
+
+### 检索
+- 查询向量由同一个运行时算出；与库内向量做余弦，低于 minScore(0.30) 的不参与重排；作为「新候选」补进来的要求更高（extraMin 0.55），避免弱相关稀释召回。
+- 词法分保持原公式（0.45 lex + 0.25 新鲜 + 0.2 重要 + 0.1 使用），再与余弦混合：
+  score = w * cos + (1 - w) * lexical，默认 w = 0.55。
+- FTS 没命中的语义近邻会作为额外候选合并进来；合并只在查询词 >= 3 字时做。
+- 模型维度不一致的条目跳过（不报错）。
+
+### 降级
+- 运行时未安装 / 未运行 / 索引为空 / embed 失败 ⇒ queryScores 返回 null，检索走原 FTS。
+- 任何失败都不抛到工具层，只在响应里标注模式。
+
+### 面板与接口
+- GET /embedding 增加 index{total,indexed,pending,coverage,space} 与 semanticEnabled/semanticWeight。
+- POST /embedding/reindex：清空当前 model_space 并回填 64 条，返回 cleared/embedded/remaining/stats。
+- 「检索」页显示覆盖率、待回填、重建索引按钮。
+
+### 非目标
+- 不做 rerank 模型、不做多向量/多字段、不做 PQ/HNSW（数据量 < 1 万条，全量余弦足够）。
+- 不索引 beliefs/traits/habits（v0.7 再议）。
+
+## 18. 自动捕获（v0.7）
+
+**目标**：不需要我自己记得「该记什么」。从她的话里挑出可能值得记的句子，排队成候选；写不写由我（或面板）决定，插件不自动落库。
+
+**线索**（`lib/capture.js` 的 `CUES`）：记住 / 习惯（每次都、总是、从来不）/ 偏好（我喜欢、我讨厌）/ 约定（说好了、以后不要）/ 身份（我叫、叫我）/ 边界（别碰、不要提）/ 情绪（我害怕、我在意）。按句号问号分句，6–160 字、去重后最多 3 条。
+
+**去重**：与现有 active 记忆相似度 ≥0.55 直接丢弃；与 pending 候选 ≥0.70 丢弃；队列上限 20，超出丢最旧。
+
+**注入**：每轮卡片后追加一行 `[待记] 可能值得记：①… ②…（值得就 seed_remember；不值得就不用管）`，最多 2 条、总长 ≤160 字；无候选时没有这一行。
+
+**收尾**：`seed_remember` 写入后与候选相似度 ≥0.60 的自动标 `accepted`（挂 memory_id）；3 天未处理的 `pending` 自动 `expired`；面板「记忆」页可逐条「记下 / 不用」。
+
+**边界**：候选只是提示，不是事实；`inferred` 不因候选而升级；候选不进语义索引、不进身份根。
+
+## 19. 自动反思与「践行」行（v0.8）
+
+**目标**：特质与说话习惯不能只靠手动 `seed_trait` / `seed_habit` 才知道自己长成什么样——每轮结束读一次我自己的回复，拿一点点证据。
+
+**信号**（`lib/reflect.js`）：诚实（我不确定 / 记不清 / 我猜）、温柔（我在 / 我懂 / 慢慢来 / 别急）、有点任性（我就要 / 哼 / 不嘛）；说话习惯：开头先接一句、全篇没有命令句。每轮最多取 2 个，增量 +0.02~0.03，受每日上限约束。
+
+**「践行」行**：特质有 `meta.behavior` 且 `status='active'`（强度 ≥0.35）时，卡片里追加一行 `[践行] A：…；B：…`，最多 2 条、≤90 字。没有稳定特质时整行省略。
+
+**边界**：反思只写 evidence 与强度，不写记忆、不改事实、不改身份根；`config.reflect=false` 关闭；异常全部吞掉，绝不影响当轮回复。
+
+**为什么是小步**：一次回复不能证明性格；每天最多 +0.10、90 天无证据回落，避免「一天变成另一个人」。
+
+## 20. 工具收敛与索引覆盖（v0.9）
+
+**工具收敛**：只读的 self/mood/persona/style/why 合并为 `seed_inspect`，`seed_*` 从 15 个降到 11 个。理由：常驻工具表是每轮成本，读操作共用一个入口就够；写操作保持独立（remember/believe/feel/trait/habit/aspire/anchor/forget）。
+
+**索引覆盖**：`embeddings.ref_type` 支持 memory / belief / habit / trait。每种类型的「总数 / 已索引 / 待补」在 `stats().byType` 里分开统计；回填按「记忆 → 认知 → 习惯 → 特质」轮转，单批最多 batch 条。
+
+**写入即索引**：`seed_believe` / `seed_trait` / `seed_habit` 成功后立刻 `indexOne`；失败只记 `lastError`，20 秒后的后台回填会补上。
+
+**跨类型召回**：`seed_search` 除记忆外，还会对认知/习惯/特质做一次余弦检索，≥0.55 的取最多 3 条，附在「— 相关认知/习惯/性格 —」下；不改变原有记忆结果的排序。
+
+**边界**：跨类型召回只读，不改动别的层；`config.semanticEnabled=false` 时整体退回纯 FTS，不出现相关段。
+
+## 21. QQ 通道（v0.10）
+
+**位置**：`lib/qq/onebot.js`（OneBot 11 客户端）、`lib/qq/message.js`（消息段与 createUserMessage）、`lib/qq/channel.js`（QQ 会话 ↔ DSH Agent）。
+
+**一个 peer 一个 Agent**：`private:<qq>` 或 `group:<群号>` → `sessionId = seedqq-<sha1(key)[0:16]>`。宿主启动后第一次收到该 peer 的消息时，按 `agents.get` → `agents.resume` → `agents.create` 的顺序找会话；找不到就新建（可选 `meta.cwd`）。因为 sessionId 是确定的，重启后还能 resume 回同一段历史。
+
+**串行**：同一个 peer 的轮次排一条链，避免两轮回复撞车；`maxQueue` 只是告警阈值，不丢弃消息。
+
+**入口**：只处理 `post_type === 'message'`；过滤自己的消息、重复 `message_id`；私聊/群聊各自白名单（`*` 全放行）；群里默认要 `at` 到自己。
+
+**出口**：`assistant/message` 有正文才发，`turn/end` 兜底；按 1200 字切块，用 `send_private_msg` / `send_group_msg`，消息段 `{type:'text', data:{text}}`。
+
+**回复等待**：订阅宿主 `session/event`，按 sessionId 找到正在等回复的那一轮；超时 `replyTimeoutMs`（默认 180s），超时后若有半截文本就发半截，没有就静默。
+
+**正文来源**：`createUserMessage` 从宿主 asar 里的 `@deepseek-ai/dsh-llm` 惰性加载（桌面版 profile 没有这个包），加载不到就用同形状的本地实现——插件不会因为 peer 缺失而加载失败。
+
+**配置**：`<stateDir>/qq.json`，字段 `enabled / wsUrl / httpUrl / accessToken / allowPrivate / allowGroups / groupRequireAt / cwd / replyTimeoutMs / maxQueue`；面板「QQ」页读写它，token 只显示前后各 4 位。
+
+**边界与风险**：一个 SnowLuma 账号同一时间只应有一个桥回话；本通道与 SurfCore 的 bridge 同时开启会双回复。QQ 通道只做「消息 ↔ 对话」，不额外发文件、不主动发消息、不读群成员资料。
+
+## 22. 记忆分层与巩固（v0.11）
+
+- 三层：`working`（工作记忆，7 天后过期退场）、`short`（短期，14 天为重审窗口）、`long`（长期，不自动过期）。
+- 分类只看三件事：层（persona/semantic/episodic/buffer）、线索词（记住 / 今天 / 我的名字…）、来源（inferred 不进长期）。
+- 巩固分数：`0.30·跨会话 + 0.25·召回 + 0.20·重要度 + 0.15·情绪强度 + 0.10·明说`；门槛 `0.60 − boost`，boost 最多 0.12（被召回与跨会话会「加速」）。
+- 情绪强度用 `|valence| × intensity`，不按正负：痛苦和喜悦一样可能值得记住。
+- 每次升级/退场写 `consolidation_log`；降级只退场、不删除。
+- 「倍速」：间隔重复（跨会话复现）与召回都会降门槛，但不允许一次事件直接晋升（明说除外）。
+
+## 23. 情感层（v0.12）
+
+**位置**：`lib/affect.js` 的 `affects` 一族 + `emotions.object`；表在 `db.js` 的 `SCHEMA_V9`。
+
+**为什么不是「情绪」的重复**：情绪有对象、很短；心情没有对象、几小时回落；情感是「对你」的慢状态——信任 / 亲近 / 欣赏 / 依恋，0–1，30 天半衰期向基线回落。它不覆盖事实，也不写进身份根。
+
+**自动联动**：一次情绪满足 `|valence| × intensity ≥ 0.2` 才会动情感。正向：信任 `+0.07·impact`、亲近 `+0.05·impact`；亲近 ≥ 0.6 时依恋 `+0.02·impact`。负向：信任 `−0.06·impact`、亲近 `−0.03·impact`，各有 0.02 地板。每次移动把近因（cause 前 60 字）记进 `evidence`，最多 12 条。
+
+**注入**：`[情感] 对他：信任 0.52、亲近 0.47`——仅当至少一项偏离基线 ≥ 0.03 时出现，整行 ≤ 48 字。
+
+**查看**：`seed_inspect what=affect` 返回强度、↑/↓、基线与近因；面板「情绪」页有「对你的情感」卡。
+
+**边界**：情感只影响语气与「愿不愿意靠近」，不改写认知和身份；长期不动会自己回到基线，不需要手动清零。
+
+## 24. 磁盘空间提醒（v0.14）
+
+记忆目录（`<DSH_HOME>/seed-of-memory/`）所在卷的剩余空间低于阈值时提醒本人，避免写到一半磁盘满。
+
+- 采集：`lib/disk.js` 的 `diskStatus(dir, {statfsFn, minFreeMB})` 用 `node:fs.statfsSync` 读 `bsize/blocks/bavail`，返回 `{path,totalBytes,freeBytes,totalMB,freeMB,minFreeMB,low,checkedAt}`；`statfs` 不可用时返回 `null`，**绝不因为读不到磁盘就阻断插件**。
+- 阈值：`diskMinFreeMB`，默认 300 MB；传入值小于 1 时按 1 处理。
+- 提醒位置：
+  - 每轮注入：`storageLine(status)` 生成一行 `[存储] …只剩 X MB（低于 Y MB 阈值）…`，只在 `low` 时出现；
+  - 面板概览：橙色横幅 + 「存储：剩余 … / 路径」一行；
+  - 路由：`GET /dsh-seed-of-memory/storage` 返回状态与文案；`panelState().storage` 同源。
+- 边界：只提醒、不清理、不迁移、不阻止写入；`seed.db` 的实际写入失败仍由 SQLite 报错，交给上层处理。
+
+## 25. 与刷B站插件兼容（v0.15）
+
+- 数据源：`<biliOutDir>/YYYY-MM-DD.md`（默认 `~/.dsh/bili-duty/out`），由 `dsh-bili-scroll` 写出。
+- 解析：`lib/bili.js` 的 `parseReport()` 取 `### BV…` 小节里的「标题 · 作者 · 链接」与 `**档位**：…`；
+  `collectBiliCandidates()` 「值得看」「可以看」都保留，生成「日期 刷B站值得看：《标题》（作者）——理由」。
+- 落点：不是直接写记忆，而是 `addCapture()` 进待记队列（cue='new'），由你在面板点「记下」才写库。
+- 去重：`<stateDir>/bili-sync.json` 记住已同步的 videoId（最多 300 个）；启动 6 秒后先同步一次，之后每 6 小时一次。
+- 手动：`/seed bili [天数] [--dry]`；开关：`biliSync: false`。
+- 边界：只读日报，不改刷B站配置；不评论、不点赞；待记过期 3 天自动退场（沿用 capture 规则）。
+
+## 26. 面板的 B站 页（v0.15）
+
+- 宿主路由：`GET /bili/status`（检测 `pluginManager.listBundles()` 里的 `dsh-bili-scroll`、日报统计、同步状态、`bili-pref.json`）、`POST /bili/install`（`pluginManager.installBundle('dsh-bili-scroll', { enabled: true })`）、`POST /bili/enable`、`POST /bili/dismiss`（记下「不装」）、`POST /bili/sync`。
+- 客户端：新增「B站」页；首次打开且未安装、未点过「不装」时，用 `window.confirm` 问一次，是则安装、否则记下 dismissed。
+- 边界：安装走 DSH 的 pluginManager 服务（和 `dsh plugin` 同一条 pnpm 路径），不自己跑包管理器；失败只回报错误，不改 profile 文件。
+
+## 27. 主动找主人（v0.16）
+
+- 判断放在 `lib/qq/proactive.js`（纯函数，便于测试）：
+  - `PROACTIVE_DEFAULTS = { enabled: true, minIntervalHours: 4, maxPerDay: 3, quietStart: 23, quietEnd: 8, target: '' }（需要自己填 `private:<你的QQ号>`）`
+  - `planProactive({ now, mood, affects, lastAt, lastUserAt, dayCount, config })` 的顺序：未开启 → 安静时段 → 当日上限 → 冷却（`lastAt` 距今 < `minIntervalHours`）→ worry（valence ≤ -0.15 且 arousal ≥ 0.45）→ miss（依恋 ≥ 0.42 且 6 小时未说话）→ lonely（12 小时未说话且信任 ≥ 0.4）→ glad（valence ≥ 0.3 且 arousal ≥ 0.45 且 3 小时未说话）。
+  - `proactiveText(kind, { memory, name })` 生成四种短文案；memory 截 36 字。
+- 运行时（`lib/index.js`）：`qqConfig.proactive` 合并默认值；`<stateDir>/qq-proactive.json` 存 `{lastAt, day, count, lastUserAt, lastKind, lastReason}`；`setInterval` 每 10 分钟跑一次 `proactiveTick()`，只在国内白天、且满足条件时发一句；`startProactive()` 在插件启动时调用，dispose 时清理。
+- 发送不走 Agent：`QqChannel.say(key, text, { voice })` 直接 `send_private_msg` / `send_group_msg`，可选合成语音条（沿用 `voiceOut` 判断），并写 `proactive` 日志。QQ 未连接或未启用时静默返回。
+- 面板（`QqView`）：开关、冷却、每日上限、安静起止、是否语音、「现在说一句」（`POST /qq/proactive/once`，绕过时段与冷却做测试），并显示 `decision`（现在会不会开口、原因、距上次说话几小时）。
+- 路由：`GET/POST /qq/proactive`（读/改配置）、`POST /qq/proactive/once`（强制发一句）。都走同源鉴权。
+- 边界：不写记忆、不改心情与情感；主动消息只是一句话，不触发反思与捕获。`lastUserAt` 由 `QqChannel.lastInboundAt` 提供，进程重启后从状态文件兜底。
+
+## 28. 群聊判断与按心情潜水（v0.17）
+
+- 纯函数在 `lib/qq/group.js`：
+  - `GROUP_DEFAULTS = { groupPolicy: 'smart', groupNames: ['阿鱼','Carys'], groupTopics: [...], groupMinGapSec: 120, groupMaxPerHour: 8, groupMaxPerDay: 60, groupQuietStart: 0, groupQuietEnd: 7, groupRandomChance: 0.06 }`。
+  - `socialEnergy(mood)` = `clamp01(0.5 + 0.5·valence + 0.5·(arousal − 0.35))`。
+  - `interestScore(text, topics)`：命中一个词 0.5，每多一个 +0.15，上限 0.95。
+  - `decideGroupReply({ text, mentioned, repliedToMe, mood, config, now, lastSpokeAt, hourCount, dayCount, random })` 顺序：
+    1. `groupPolicy === 'off'` → 不接；
+    2. @我 / 回复我 → 接（跳过夜间、冷却、心情）；
+    3. 当日上限 / 每小时上限 / 间隔 → 不接；
+    4. 夜间（`groupQuietStart`~`groupQuietEnd`）→ 不接；
+    5. 提到名字 → 85%；
+    6. 低落（valence ≤ -0.3 且 arousal ≤ 0.45）→ 不接；
+    7. 兴趣 → `interest × (0.4 + 0.6·energy)`；
+    8. 其余 → 电量 ≥ 0.65 时 `groupRandomChance × energy`，否则潜水。
+- `QqChannel`：`#admitGroup` 在**转写之后**判断，日志写 `join` / `lurk`；`groupPolicy: 'at'` 保持旧的「只回 @」。群内发言后 `#noteSpoken` 用 `bumpGroupStats` 记小时/天计数；发出的消息 id 进 `myMessageIds`（上限 300），用于识别「回复我」。
+- 心情来源：构造时注入 `getMood: () => currentMood(db)`，每轮判断读实时心情，不另存。
+- 面板（`QqView`）：群聊卡片（聪明模式 / 只在 @ 时回 / 群聊关闭、兴趣词、间隔/每小时/每天、夜间起止、当天各群发言数）。
+- 配置写入 `qq.json`：`groupPolicy`、`groupTopics`、`groupNames`、`groupMinGapSec`、`groupMaxPerHour`、`groupMaxPerDay`、`groupQuietStart`、`groupQuietEnd`、`groupRandomChance`。
+- 边界：判断只影响「接不接」，不改会话历史；潜水时消息不入 Agent，也不会被捕获成记忆。
+
+## 29. 语音能力探测与降级（v0.18）
+
+**目标**：没装 dsh-voice（或没配 ASR/TTS）的人也能正常用 Seed，不会因为「听得见 / 会说话」缺失而报错或沉默。
+
+- 探测在 `lib/voice.js`：
+  - `asrConfigStatus(config)`：`asrPython` 与 `asrScript` 都配了、且脚本文件存在，才算可用；否则返回原因（`没配置语音识别（asrPython / asrScript）`、`asrPython 没配置`、`asrScript 不存在：…`）。
+  - `probeTts(url, { fetchImpl, timeoutMs = 900 })`：对 `<ttsUrl>/` 发 GET，**有 HTTP 响应（包括 404）就算可达**；网络错误或超时返回 `连不上 ttsUrl：…`。默认 900 ms，避免拖慢收消息。
+  - `voiceCapability(config, options)` → `{ tts: {ok, reason, url}, asr: {ok, reason, script}, any, textOnly }`；`VOICE_HINT` 是面板里的一句说明。
+  - `VoiceProbe`：60 秒 TTL 的记忆化包装（注入 `probe` 便于测试，`get(config, {force})`）。
+- 收（`QqChannel.handleEvent`）：
+  - 语音段先按原逻辑下载/解码；`caps.asr.ok` 才转写，否则标记 skip（日志 `voice-skip`），消息按「（语音）」占位继续走。
+  - 若这条**只有语音**（`#hasVoice && !#hasTextLike`），同一会话 15 分钟内最多直接回一次 `VOICE_NOTICE`（绕过 Agent），避免每条都念一遍。
+- 发：`#canSpeak(text)` = `voiceOut` 允许 + `looksSpeakable(text)` + TTS 真的可达；不可达时退回文字，`tts-skip` 日志 10 分钟最多一条。`say()` 的可选语音同理。
+- 面板与路由：`GET /dsh-seed-of-memory/voice`（30 秒缓存，`?refresh=1` 强制重探）返回能力 + `pluginManager` 里 `dsh-voice` 的安装/启用状态 + `mode`（`full` / `voice-out` / `voice-in` / `text`）；「QQ」页语音卡片可「重新检测」。
+- 边界：探测失败只降级，不抛错；不因为对方没装语音就拒绝收文字；TTS 探活不合成音频、不写盘。
+
 

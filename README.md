@@ -14,14 +14,15 @@ Seed of Memory is a local-first memory plugin for **DeepSeek Harness (DSH)**. It
 
 大多数「记忆插件」会把一堆摘要塞进上下文，或者把人格写死成一张卡。这个项目反过来：
 
-- **根（identity.md / us.md）** 是纯文本，每轮最先注入；插件卸了、模型换了，任何 agent 都能直接读。
+- **根（anchors.md / self.md / us.md）** 是纯文本，每轮最先注入；插件卸了、模型换了，任何 agent 都能直接读。
 - **记忆** 分四层（persona / semantic / episodic / buffer），有半衰期、有取代链、有「存疑」状态，不删历史。
 - **认知** 是带证据与置信度的判断；冲突时挂起，不覆盖。
 - **情绪** 由六维评估（相关、顺逆、确定、可控、归因、意外）推出来，写进 `emotions`，聚合为 `mood`，只影响语气与召回权重，**不改事实**。
+- **情感** 是「对他」的慢状态：信任 / 亲近 / 欣赏 / 依恋，30 天半衰期回落；情绪只轻轻推它一下。
 - **人格** 从记忆与认知里长出来：理想 → 特质 → 行为，有每日上限、有反例、有衰减。
 - **说话习惯** 单独一层，默认持续学习，不衰减；只影响怎么说，不影响说什么。
 
-所有判断都能追：`seed_why` 能查到一条记忆/认知/情绪/习惯的来历。
+所有判断都能追：`seed_inspect what=why` 能查到一条记忆/认知/情绪/习惯的来历。
 
 ## 需要什么
 
@@ -52,12 +53,29 @@ pnpm add dsh-seed-of-memory
 [说话] …
 ```
 
+## 下载（离线资源）
+
+检索运行时和语音模型都比较大，没有放进代码仓库：
+
+| 文件 | 大小 | 用途 | 下载 |
+| --- | --- | --- | --- |
+| 检索运行时 | 约 71 MB | 语义检索（Ollama + bge-small） | [下载](https://github.com/ruiyuanyisu/dsh-seed-of-memory/releases/download/resources-v0.18.1/seed-embed-runtime-bge-small-v1.0.0.zip) |
+| 语音模型 small | 约 426 MB | 本地语音识别（faster-whisper small） | [GitHub](https://github.com/ruiyuanyisu/dsh-seed-of-memory/releases/download/resources-v0.18.1/faster-whisper-small.zip) / [迅雷网盘](https://pan.xunlei.com/s/VP6ISBPslAOekvaS7k23N_s2A1A#)（提取码 `vmys`） |
+| 语音模型 large-v3 | 约 2.7 GB | 更准的语音识别 | [迅雷网盘](https://pan.xunlei.com/s/VP6ISBPslAOekvaS7k23N_s2A1A#)（提取码 `vmys`）；GitHub 单个文件上限 2 GB，放不下，所以只放网盘 |
+
+- **检索运行时**：zip **不用解压**，放进「下载 / 桌面 / 文档」任一目录，插件会自己发现并安装（见下文「语义检索」）。
+- **语音模型**：解压后是一个文件夹，把 `qq.json` 的 `asrModel` 填成**这个文件夹的完整路径**（例如 `D:\\models\\whisper\\faster-whisper-small`），`asrModelsDir` 留空；另外需要 `pip install faster-whisper`。
+- 校验值：`Get-FileHash <文件> -Algorithm SHA256`（PowerShell）或 `sha256sum <文件>`。
+
+只想要文字记忆，两个都不用下。
+
 ## 数据放在哪
 
 ```
 ~/.dsh/seed-of-memory/
 ├── seed.db          # SQLite（WAL）：记忆、认知、情绪、心情、特质、习惯、档案索引
-├── identity.md      # 我是谁（纯文本，可直接改）
+├── anchors.md       # 根：名字与善良（工具不能改，纯文本，可直接改）
+├── self.md          # 我是谁（我自己写，可以慢慢长）
 ├── us.md            # 我们之间（纯文本，可直接改）
 ├── sources.json     # 可选：外部档案目录（见下）
 └── export-*/        # /seed export 导出的快照
@@ -91,11 +109,83 @@ pnpm add dsh-seed-of-memory
 ]
 ```
 
+## 语义检索（可选，推荐）
+
+默认检索是 FTS5 字面匹配：搜「怕冷」找不到「冬天手脚冰凉」。装上本地运行时后会升级成语义匹配。
+
+**两步**
+
+1. 下载运行时包（约 71MB，内含 Ollama 与 bge-small-zh-v1.5），GitHub Releases 或上面的迅雷网盘都行：
+   https://github.com/ruiyuanyisu/dsh-seed-of-memory/releases
+2. 把 zip **放进「下载 / 桌面 / 文档」任意一个目录**，打开设置 → 记忆之种 → **检索**页。
+
+插件会扫描到它，默认**自动安装并启动**（可在「检索」页点「安装 / 启动 / 停止」，也可以手动点）。
+
+运行时装在 `~/.dsh/seed-of-memory/embedding-runtime/`，不覆盖 `seed.db`，卸载就是删这个目录。
+
+**端口**：默认 `127.0.0.1:11435`。如果和别的 embedding 服务（比如 SurfCore 的 runtime）冲突，改启动脚本里的 `OLLAMA_HOST`，或在 config 里改 `embeddingPort`。
+
+配置项：
+
+```yaml
+    embeddingAutoInstall: true   # 检测到安装包就装
+    embeddingAutoStart: true     # 装好/启动时自动拉起运行时
+    embeddingPort: 11435
+    semanticEnabled: true        # 语义混合检索总开关
+    semanticWeight: 0.55         # 余弦分权重（其余给词法分）
+    embeddingBatch: 16           # 每次回填多少条记忆
+    diskMinFreeMB: 300           # 磁盘剩余低于这个值时提醒
+```
+
+**磁盘空间提醒**
+
+数据目录所在磁盘的剩余空间低于 `diskMinFreeMB`（默认 300 MB）时：
+
+- 概览页顶部出现橙色「磁盘空间不足」提示，并显示剩余空间与目录路径；
+- 每轮注入的提示里会多一行 `[存储] 记忆目录所在磁盘只剩 …`，让 agent 主动告诉你；
+- `GET /dsh-seed-of-memory/storage` 与 `seed_inspect` 之外，也可从面板「概览」页的「存储」一行随时看到余量。
+
+提醒不会阻止写入（磁盘满时 SQLite 自己会报错），它只是让你有时间先把目录搬走或腾出空间。
+
+**索引与打分**
+
+- 记忆写入后由后台按批回填向量（默认每 20 秒一批，每批 16 条），索引覆盖率在「检索」页可见。
+- 检索时先跑 FTS 拿词法候选，再把语义近邻并进来：参与重排的门槛是余弦 ≥ 0.30，作为「新候选」补进来的门槛是 ≥ 0.55；排序按
+  `w·余弦 + (1−w)·原词法分`，默认 `w = 0.55`。
+- 没有运行时、索引为空、或模型维度对不上时，自动退回纯 FTS，不报错、不影响其他功能。
+- 换模型/换维度要「重建索引」（会清掉当前 `model_space` 的向量重算）；不同模型空间互不覆盖。
+
+## 自动捕获（默认开）
+
+每一轮，插件会从她新说的话里挑出带线索的句子（记住 / 每次都 / 我讨厌 / 说好了 / 叫我 / 别碰 / 我害怕…），去重后排队成「候选」，并在下一轮的卡片后附一行：
+
+```
+[待记] 可能值得记：①… ②…（值得就 seed_remember；不值得就不用管）
+```
+
+候选**不会**自动变成记忆：要么由 agent 用 `seed_remember` 决定，要么在面板「记忆」页点「记下 / 不用」。写过之后相似的候选会自动标记为已采用，3 天没处理的自动过期。想看队列可以 `GET /dsh-seed-of-memory/captures`。
+
+## QQ 通道（可选，SnowLuma）
+
+如果你在用 SnowLuma 把本机 QQ 号挂成 OneBot 11，可以让 Seed of Memory 直接接管消息：**QQ 私聊/群聊会变成一颗正常的 Agent 会话**，所以根、记忆卡、人格、心情、自动捕获全都在，和 Web 里说话没有区别。
+
+1. 面板「QQ」页填 `ws://127.0.0.1:3001`、`http://127.0.0.1:3000`、SnowLuma 的 `accessToken`，填允许的私聊 QQ / 群号（`*` 表示全部），保存。
+2. 点「连接」。连上后，在 QQ 里发给白名单里的人/群一句话即可。
+3. 群里默认要 @ 才回；发 `/reset` 可以丢掉旧会话重新开始。
+
+注意：
+
+- **同一个 SnowLuma 账号同时只能有一个桥回话。** 如果 SurfCore 的 bridge 也连着它，会双回复；启用本通道前先关掉 SurfCore 的 QQ agent，或换一个账号。
+- 配置存在 `<数据目录>/qq.json`（默认 `~/.dsh/seed-of-memory/qq.json`），token 在面板里只显示前后各 4 位。
+- QQ 通道默认关闭（`enabled: false`），面板点过「连接」才会持久化开启。
+
 ## 工具与命令
 
-工具：`seed_remember` `seed_search` `seed_open` `seed_why` `seed_forget` \
-`seed_self` `seed_anchor` `seed_believe` `seed_feel` `seed_mood` \
-`seed_trait` `seed_aspire` `seed_persona` `seed_habit` `seed_style`
+工具（11 个）：
+`seed_remember` `seed_search` `seed_open` `seed_inspect` `seed_forget` \
+`seed_anchor` `seed_believe` `seed_feel` `seed_trait` `seed_aspire` `seed_habit`
+
+`seed_inspect` 是只读入口：`what` = `self`（根 + 我是谁 + 我们之间）/ `persona`（理想与特质）/ `style`（说话习惯）/ `mood`（此刻心情）/ `affect`（对你的情感）/ `why`（某条记忆或认知的来历，传 `id`）。
 
 命令：`/seed status | search | remember | why | self | anchor | mood | feel` \
 `| believe | persona | aspire | trait | habit | style | sources [rescan] | export`
@@ -114,7 +204,8 @@ pnpm add dsh-seed-of-memory
 
 - 只使用 Node 内置模块（`node:sqlite`、`node:fs`、`node:crypto` 等），`dependencies` 为空。
 - 客户端面板通过 `window.__ModuleLoader__` 注册 `settings.section`，不需要构建步骤。
-- 不 spawn 子进程、不打开端口（面板走 DSH 自己的 webServer，带 `connection.requestRejection` 鉴权）。
+- 默认不 spawn 子进程、不开端口：语义检索是可选项，只有在安装并启动本地运行时后才会在 `127.0.0.1:11435` 起一个 `ollama serve`（面板可随时关掉）。
+- 面板与本地运行时都只监听回环地址；HTTP 路由统一走 DSH 的 `connection.requestRejection` 鉴权。
 
 ## 开发
 
@@ -128,3 +219,98 @@ node --test test/*.test.mjs          # 需要带 node:sqlite 的 Node 22.19+
 ## License
 
 MIT
+
+### QQ 通道的模型
+
+qq.json 里可以显式指定 provider / model / reasoningEffort；不填会跟随宿主默认，但**新建 QQ 会话时宿主不会自动挑模型**，所以建议至少填上：
+
+```json
+{ "provider": "deepseek-account", "model": "deepseek-flash", "reasoningEffort": "max" }
+```
+
+同一个 QQ 号只能有一个桥在回话：启用 Seed 的 QQ 通道前，请停用 SurfCore 的 qq-bridge（dsh.profile.bundles 里关掉 surfcore，或在它的设置里断开），否则会双回复。
+
+### QQ 语音
+
+在 `qq.json` 里打开：
+
+```json
+{
+  "voiceIn": true,
+  "voiceOut": "auto",
+  "voiceMaxChars": 80,
+  "voiceDir": "<stateDir>/qq-voice",
+  "asrPython": "D:\\path\\to\\venv\\Scripts\\python.exe",
+  "asrModel": "small",
+  "asrModelsDir": "D:\\models\\whisper",
+  "asrTorchLib": "D:\\path\\to\\venv\\Lib\\site-packages\\torch\\lib",
+  "ttsUrl": "http://127.0.0.1:9880",
+  "refAudio": "D:\\ref\\ref.wav",
+  "refText": "参考音频的原文"
+}
+```
+
+- 收：语音段会先找本地文件、再 `get_record`、最后按 url 下载，然后交给本地 faster-whisper 转写，正文前加「（语音）」。
+- 发：`voiceOut = "auto"` 时，短回复（≤ `voiceMaxChars`）合成语音条；合成或发送失败自动退回文字。
+- `asrScript` 默认用包内的 `asr/asr_once.py`；`ttsUrl` 指向本地 GPT-SoVITS `api_v2.py`。
+
+### 没装语音模块也能用（v0.18）
+
+- 听：没有可用的识别（没配 `asrPython` / `asrScript`，或脚本不存在）时不转写、不瞎猜；**纯语音消息**会在会话里提示一次「这条是语音，我暂时听不到」，同一会话 15 分钟内不重复。
+- 说：`ttsUrl` 连不上时自动退回文字（`tts-skip` 日志每 10 分钟最多一条），不会把「会说话」当成必需。
+- 也可以不装 dsh-voice：装它、或直接填 `ttsUrl` / `asrPython` + `asrScript` 都行。
+- 面板「QQ」页有语音卡片：模式（能听也能说 / 只能说 / 只能听 / 纯文字）、`dsh-voice` 是否安装启用、听与说的原因、`ttsUrl`，可点「重新检测」。
+- `GET /dsh-seed-of-memory/voice` 返回同样的状态。
+
+### 主动找主人（按心情，v0.16）
+
+不是定时问候，是「到点了才开口」：
+
+| 什么时候 | 心情 / 情感条件 | 说什么 |
+| --- | --- | --- |
+| 担心 | 心情偏负（valence ≤ -0.15）且被搅动（arousal ≥ 0.45） | 「刚才心里有点不踏实……你还好吗？」 |
+| 想你 | 依恋 ≥ 0.42，且 6 小时没说话 | 「有点想你。翻到一句你以前说过的……」 |
+| 有点空 | 12 小时没说话，信任 ≥ 0.4 | 「安静了一会儿，忽然有点空……」 |
+| 想分享 | 心情好（valence ≥ 0.3、arousal ≥ 0.45），且 3 小时没说话 | 「今天有件小事让我挺开心……」 |
+
+- 安静时段（默认 23:00–08:00）不说；两次之间至少隔 4 小时；一天最多 3 次。
+- 文案会带一句真实的记忆（最近 30 条里随机挑一条截 36 字），不是模板群发。
+- 默认不指定对象（`target` 为空就不发）；在 `qq.json` 里填 `"proactive": { "target": "private:10001" }`（换成自己的 QQ 号），也可以在面板「QQ」页改开关、冷却、上限、安静时段，点「现在说一句」立刻试。
+- 状态在 `<stateDir>/qq-proactive.json`；发送记录写进 `qq.log`（`proactive`）。
+- 聊天里也能用：`/seed proactive` 看现在会不会开口，`/seed proactive say` 立刻说一句。
+- 默认不读 `qqConfig.enabled` 之外的东西；QQ 没连上时什么都不做。
+
+### 群聊：不是每条都接（v0.17）
+
+群消息默认走「聪明模式」——先看跟我有没有关系，再看我现在想不想说话：
+
+| 这条消息 | 接不接 |
+| --- | --- |
+| @我 / 回复我 | 一定接（不受时段与冷却限制） |
+| 提到「阿鱼」「Carys」 | 85% 接 |
+| 聊到我感兴趣的东西（记忆、插件、AI、语音、游戏、B站…） | 按心情折算，约 40%–60% |
+| 什么都没沾 | 心情很旺时 5% 左右随口接一句；心情低落直接潜水 |
+| 夜里 00:00–07:00 | 非 @ 的消息不接 |
+
+- 频率保护：两次之间至少 120 秒，每小时最多 8 条，每天最多 60 条。
+- 兴趣词在面板「QQ」页改（逗号分隔）；也可以切成「只在 @ 我时回」或「群聊关闭」。
+- 判断是纯函数（`lib/qq/group.js`），日志里会写 `join`（接了，附电量/兴趣）或 `lurk`（没接，附原因），面板能看到。
+- 说话电量 = `0.5 + 0.5×愉悦 + 0.5×(唤醒−0.35)`，跟着当前 mood 走；低落时（愉悦 ≤ -0.3 且唤醒 ≤ 0.45）不主动插话。
+
+## 与「刷B站」插件兼容（可选）
+
+`dsh-bili-scroll` 每天会把「又刷了一轮」的日报写到 `~/.dsh/bili-duty/out/YYYY-MM-DD.md`。
+本插件可以把其中的「值得看 / 可以看」条目收进待记：默认每 6 小时看一次最近 3 天的日报，
+把「日期 + 标题 + 作者 + 一句话理由」放进「记忆」页的待记候选——**你点「记下」才会写进记忆**。
+
+手动同步：`/seed bili [天数] [--dry]`；`--dry` 只预览不写入。
+
+配置在 `cordis.patch.yml` 或 `seed` 配置里：`biliOutDir`（默认 `~/.dsh/bili-duty/out`）、`biliSync`（false 关掉自动同步）。
+
+把这个目录也加进外部档案（`sources.json`）后，`seed_search` 能直接搜日报原文与理由。
+
+### 面板里的「B站」页
+
+- 自动检测 `dsh-bili-scroll`（刷B站）是否安装：没有安装时，打开这一页会弹一次确认框，点「是」直接装并启用，点「否」就不装（之后想装可以点页面上的「安装」）。
+- 显示最近 7 天日报统计（份数、值得看、可以看、最新日期）、已同步视频数与时间。
+- 「立即同步」把最近 3 天的「值得看 / 可以看」收进待记；去重靠 `bili-sync.json`。

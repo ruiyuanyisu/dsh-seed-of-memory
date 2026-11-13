@@ -14,6 +14,7 @@ function makeEnv() {
   const commands = []
   const prompts = []
   const disposers = []
+  const inboxHandlers = []
 
   const agent = {
     session: { id: 'session-gui-1' },
@@ -26,7 +27,15 @@ function makeEnv() {
           return dispose
         },
       },
+      on(event, handler) {
+        if (event === 'agent/inbox/inserted') inboxHandlers.push(handler)
+      },
     },
+  }
+
+  const emitInbox = (text) => {
+    const message = { content: [{ type: 'text', text }] }
+    for (const handler of inboxHandlers) handler({ message })
   }
 
   let onDispose = null
@@ -58,10 +67,10 @@ function makeEnv() {
     try { onDispose?.() } catch {}
     try { rmSync(home, { recursive: true, force: true, maxRetries: 3 }) } catch {}
   }
-  return { home, ctx, tools, commands, prompts, disposers, cleanup }
+  return { home, ctx, tools, commands, prompts, disposers, cleanup, emitInbox }
 }
 
-test('registers the six seed tools with valid schema', () => {
+test('registers the seed tools with valid schema', () => {
   const env = makeEnv()
   try {
     apply(env.ctx, { budget: 600 })
@@ -70,18 +79,15 @@ test('registers the six seed tools with valid schema', () => {
       'seed_anchor',
       'seed_aspire',
       'seed_believe',
+      'seed_consolidate',
       'seed_feel',
       'seed_forget',
       'seed_habit',
-      'seed_mood',
+      'seed_inspect',
       'seed_open',
-      'seed_persona',
       'seed_remember',
       'seed_search',
-      'seed_self',
-      'seed_style',
       'seed_trait',
-      'seed_why',
     ])
     for (const definition of env.tools) {
       assert.equal(definition.parameters.type, 'object')
@@ -111,7 +117,7 @@ test('remember, search, why and forget work end to end', async () => {
     assert.match(found.text, /夜里听雨/)
 
     const id = wrote.text.match(/（\w+）：([a-z0-9]+)/)[1]
-    const why = await byName.seed_why.execute({ id })
+    const why = await byName.seed_inspect.execute({ what: 'why', id })
     assert.match(why.text, /她喜欢夜里听雨/)
 
     const removed = await byName.seed_forget.execute({ id })
@@ -138,6 +144,26 @@ test('mounts a memory card into the agent system prompt', async () => {
     // the identity root must be present before the memory card, in every session
     assert.match(text, /Seed of Memory · 根/)
     assert.match(text, /我是谁/)
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('auto-captures a cued sentence and clears it after remember', async () => {
+  const env = makeEnv()
+  try {
+    apply(env.ctx, { budget: 600 })
+    // wait one sweep so the card is mounted and the inbox listener attached
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    env.emitInbox('今天有点累。记住：我讨厌被人催着做决定。')
+    const options = env.prompts[0]
+    const text = options.text()
+    assert.match(text, /\[待记\]/)
+    assert.match(text, /我讨厌被人催着做决定/)
+
+    const byName = Object.fromEntries(env.tools.map((t) => [t.name, t]))
+    await byName.seed_remember.execute({ text: '我讨厌被人催着做决定', layer: 'semantic' })
+    assert.doesNotMatch(options.text(), /\[待记\]/)
   } finally {
     env.cleanup()
   }
