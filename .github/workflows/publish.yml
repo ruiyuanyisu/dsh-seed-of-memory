@@ -1,0 +1,27 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: npm version
+        run: npm --version
+      - name: Verify package
+        run: node --check lib/index.js
+      # Trusted publishing (OIDC)：不需要 NPM_TOKEN。
+      # npm 上这个包的 Trusted publisher 要填 ruiyuanyisu / dsh-seed-of-memory / publish.yml
+      - name: Publish
+        run: npm publish --access public
