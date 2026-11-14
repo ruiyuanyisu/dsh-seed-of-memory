@@ -137,3 +137,23 @@ test('stats 报出文件/分块数量', () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('盘上删掉的文件，重新扫过就不再搜得到', () => {
+  const root = tempRoot()
+  const db = openDatabase(path.join(root, 'seed.db'))
+  try {
+    const index = new ExternalIndex(db, sourceFor(root))
+    index.scan()
+    const file = path.join(root, '记忆本', '日', '2026-11-11.md')
+    assert.ok(index.search('记忆种进', { limit: 5 }).some((hit) => hit.path === file))
+
+    rmSync(file)
+    const again = index.scan()
+    assert.equal(again.pruned, 1, '删掉的文件应该从索引里退场')
+    assert.ok(!index.search('记忆种进', { limit: 5 }).some((hit) => hit.path === file))
+    assert.equal(index.stats().files, 1)
+  } finally {
+    closeDatabase(db)
+    rmSync(root, { recursive: true, force: true })
+  }
+})

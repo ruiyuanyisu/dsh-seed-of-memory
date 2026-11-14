@@ -1,6 +1,6 @@
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,6 +9,7 @@ import { QqChannel } from '../lib/qq/channel.js'
 
 function tmpFile(name = 'qq-history.json') {
   const dir = mkdtempSync(join(tmpdir(), 'seedqq-'))
+  after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3 }) } catch {} })
   return join(dir, name)
 }
 

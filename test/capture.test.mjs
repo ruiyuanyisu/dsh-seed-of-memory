@@ -117,3 +117,35 @@ test('captureLine 有候选时给一行、为空时为空串', () => {
     assert.ok(line.length <= 160)
   })
 })
+
+test('已经记过的事不再出现在待记里', () => {
+  return withDb((db, store) => {
+    const memory = store.remember({ text: '她讨厌被人催着做决定', layer: 'semantic' })
+    const row = addCapture(db, { text: '她讨厌被人催着做决定', cue: 'preference' })
+    assert.equal(captureLine(db), '')
+    const after = listCaptures(db, { status: 'all' }).find((r) => r.id === row.id)
+    assert.equal(after.status, 'accepted')
+    assert.equal(after.memory_id, memory.id)
+    // 没记过的照样提示
+    addCapture(db, { text: '她喜欢在夜里听雨', cue: 'preference' })
+    assert.match(captureLine(db), /喜欢在夜里听雨/)
+  })
+})
+test('「记住：」这种开头不算事情本身', () => {
+  withDb((db, store) => {
+    const [pending] = extractCandidates('记住：我外婆家院子里有一棵枣树，小时候总爬上去摘枣')
+    assert.ok(pending, '该抽出一条候选')
+    assert.ok(!/^记住/.test(pending.text), '候选不该带着「记住：」：' + pending.text)
+    assert.ok(pending.text.startsWith('我外婆家'))
+
+    const memory = acceptCapture(db, store, addCapture(db, { text: pending.text, cue: pending.cue }).id, {
+      layer: 'episodic',
+    })
+    assert.ok(memory?.id)
+    assert.ok(!/^记住/.test(store.get(memory.id).text))
+
+    // 同一件事换个说法再说一遍（还带前缀）也不该又冒出候选
+    const again = extractCandidates('记住：我外婆家院子里有一棵枣树，小时候总爬上去摘枣')
+    assert.equal(again.length, 1)
+  })
+})

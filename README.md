@@ -17,7 +17,7 @@ Seed of Memory is a local-first memory plugin for **DeepSeek Harness (DSH)**. It
 - **根（anchors.md / self.md / us.md）** 是纯文本，每轮最先注入；插件卸了、模型换了，任何 agent 都能直接读。
 - **记忆** 分四层（persona / semantic / episodic / buffer），有半衰期、有取代链、有「存疑」状态，不删历史。
 - **认知** 是带证据与置信度的判断；冲突时挂起，不覆盖。
-- **情绪** 由六维评估（相关、顺逆、确定、可控、归因、意外）推出来，写进 `emotions`，聚合为 `mood`，只影响语气与召回权重，**不改事实**。
+- **情绪** 有两层：一层是被动打分（你每说一句话，按词表判夸奖 / 重话 / 出事 / 催促，推出积极性、委屈、愧疚、压力，时间会把它们冲回去），一层是六维评估（相关、顺逆、确定、可控、归因、意外）。两层都写进 `emotions`、聚合为 `mood`，只影响语气与召回权重，**不改事实**。
 - **情感** 是「对他」的慢状态：信任 / 亲近 / 欣赏 / 依恋，30 天半衰期回落；情绪只轻轻推它一下。
 - **人格** 从记忆与认知里长出来：理想 → 特质 → 行为，有每日上限、有反例、有衰减。
 - **说话习惯** 单独一层，默认持续学习，不衰减；只影响怎么说，不影响说什么。
@@ -73,7 +73,7 @@ pnpm add dsh-seed-of-memory
 
 ```
 ~/.dsh/seed-of-memory/
-├── seed.db          # SQLite（WAL）：记忆、认知、情绪、心情、特质、习惯、档案索引
+├── seed.db          # SQLite（WAL）：记忆、认知、情绪、情绪内核（qing_state）、心情、特质、习惯、档案索引
 ├── anchors.md       # 根：名字与善良（工具不能改，纯文本，可直接改）
 ├── self.md          # 我是谁（我自己写，可以慢慢长）
 ├── us.md            # 我们之间（纯文本，可直接改）
@@ -189,14 +189,20 @@ pnpm add dsh-seed-of-memory
 
 ## 工具与命令
 
-工具（11 个）：
-`seed_remember` `seed_search` `seed_open` `seed_inspect` `seed_forget` \
-`seed_anchor` `seed_believe` `seed_feel` `seed_trait` `seed_aspire` `seed_habit`
+工具（14 个）：
+`seed_remember` `seed_search` `seed_open` `seed_inspect` `seed_forget` `seed_consolidate` \
+`seed_anchor` `seed_believe` `seed_feel` `seed_qing` `seed_trait` `seed_aspire` `seed_habit` `seed_compat`
 
 `seed_inspect` 是只读入口：`what` = `self`（根 + 我是谁 + 我们之间）/ `persona`（理想与特质）/ `style`（说话习惯）/ `mood`（此刻心情）/ `affect`（对你的情感）/ `why`（某条记忆或认知的来历，传 `id`）。
 
-命令：`/seed status | search | remember | why | self | anchor | mood | feel` \
-`| believe | persona | aspire | trait | habit | style | sources [rescan] | export`
+`seed_qing` 看当下的情绪内核：积极性 / 委屈 / 愧疚 / 压力。你每说一句话它就自己打分（先剥噪声、再认否定和反话），连着夸第三句多给三成、连着骂第三句只算六成；只报状态不教怎么演，大的那一下会顺手记成一条情绪。`status` 看状态、`test` 拿一段话试打分、`set` 手动改。
+
+`seed_compat` 和别的记忆插件打交道（只读他们的数据）：`detect` 看现场装了谁，`preview` 先看几条，`import` 搬进 Seed（`dryRun` 可干跑），`export` 导成 jsonl / md。装了别家时记忆卡会按 `sharedBudgetRatio` 让一点预算；只装 Seed 时功能不降级。
+
+`seed_consolidate` 整理分层：证据够的短期升长期、过期的退场，默认只预览，`apply` 才真执行。
+
+命令：`/seed status | search | remember | why | self | anchor | grow | mood | feel` \
+`| believe | persona | aspire | trait | habit | style | consolidate | backup | sources [rescan] | bili | proactive | export`
 
 ## 设计原则
 

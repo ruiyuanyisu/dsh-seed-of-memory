@@ -1,6 +1,6 @@
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,6 +22,7 @@ test('ASR 没配置时给得出原因', () => {
 
 test('ASR 脚本存在才算可用', () => {
   const dir = mkdtempSync(join(tmpdir(), 'seed-voice-'))
+  after(() => { try { rmSync(dir, { recursive: true, force: true, maxRetries: 3 }) } catch {} })
   const script = join(dir, 'asr.py')
   writeFileSync(script, 'print(1)', 'utf8')
   const status = asrConfigStatus({ asrPython: 'python', asrScript: script })

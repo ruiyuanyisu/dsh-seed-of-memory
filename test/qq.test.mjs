@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import { QqChannel, splitBubbles } from '../lib/qq/channel.js'
+import { QqChannel, splitBubbles, voiceFallback } from '../lib/qq/channel.js'
 import { ownerTarget } from '../lib/qq/proactive.js'
 import { segmentsOf, textOf, mentionedSelf, fallbackUserMessage } from '../lib/qq/message.js'
 
@@ -53,6 +56,12 @@ function fakeAgents({ reply = '好的，我记住了。', failResume = true } = 
               { header: { id: sessionId } },
               { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: reply }] } } },
             )
+            // 一个字都没答上来时，靠 turn/end 收尾
+            if (!reply) {
+              setTimeout(() => {
+                channelRef?.onSessionEvent({ header: { id: sessionId } }, { type: 'turn/end', data: {} })
+              }, 5)
+            }
           }, 5)
         },
         async whenIdle() {},
@@ -85,6 +94,15 @@ function makeChannel({ config = {}, agents, client = new FakeClient() } = {}) {
   channelRef = channel
   return { channel, client }
 }
+
+test('没听懂的时候要说一声：语音转文字失败不等于没收到', () => {
+  assert.equal(voiceFallback({ text: '' }), '')
+  assert.equal(voiceFallback({ text: '在的' }), '')
+  assert.equal(voiceFallback({ text: '', unhearable: true }), 'unavailable')
+  assert.equal(voiceFallback({ text: '', asrFailed: true }), 'hear-failed')
+  // 有文字时，哪怕语音没转成功，也不用再道歉
+  assert.equal(voiceFallback({ text: '顺便说一句', asrFailed: true }), '')
+})
 
 test('segmentsOf: array / CQ 字符串', () => {
   const arr = segmentsOf([
@@ -134,8 +152,37 @@ test('私聊白名单：收到消息 → 建会话 → 回复', async () => {
   assert.match(client.calls[0].params.message[0].data.text, /记住了/)
 })
 
-test('私聊不在白名单：不建会话、不回复', async () => {
-  const { channel, client } = makeChannel()
+test('一句话都没答上来时说一声，不让人对着空气说话', async () => {
+  const { channel, client } = makeChannel({ agents: fakeAgents({ reply: '' }) })
+  channel.start()
+  await channel.handleEvent({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 9,
+    message: [{ type: 'text', data: { text: '在吗' } }],
+  })
+  const sent = client.calls.filter((call) => call.action === 'send_private_msg')
+  assert.equal(sent.length, 1)
+  assert.match(sent[0].params.message[0].data.text, /卡了一下/)
+})
+
+test('关了 silentFallback 就安静着', async () => {
+  const { channel, client } = makeChannel({ agents: fakeAgents({ reply: '' }), config: { silentFallback: false } })
+  channel.start()
+  await channel.handleEvent({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 10,
+    message: [{ type: 'text', data: { text: '在吗' } }],
+  })
+  assert.equal(client.calls.length, 0)
+})
+
+test('私聊不在白名单：不建会话、不回复', async () => {  const { channel, client } = makeChannel()
   await channel.handleEvent({
     post_type: 'message',
     message_type: 'private',
@@ -288,4 +335,40 @@ test('没填主人 QQ、也没填 target 时 say 不会乱发', async () => {
   assert.equal(target, '')
   assert.equal(await channel.say(target, '不该发出去'), false)
   assert.equal(client.calls.length, 0)
+})
+test('重启之后还记得刚才聊到哪：qq-history 接上话', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seed-qqrestart-'))
+  const historyFile = join(dir, 'qq-history.json')
+  const message = (id, text) => ({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: id,
+    raw_message: text,
+    message: [{ type: 'text', data: { text } }],
+  })
+  try {
+    const first = makeChannel({ config: { historyFile } })
+    first.channel.start()
+    await first.channel.handleEvent(message(21, '他叫我别熬夜，早点睡'))
+    assert.equal(first.client.calls.length, 1)
+    first.channel.stop()
+
+    const agents2 = fakeAgents()
+    const second = makeChannel({ config: { historyFile }, agents: agents2 })
+    second.channel.start()
+    await second.channel.handleEvent(message(22, '在吗'))
+    assert.equal(agents2.created.length, 1, '重启后应该重新建会话')
+    const body = agents2.created[0].message.content[0].text
+    assert.match(body, /聊过的最后几句/)
+    assert.match(body, /别熬夜/)
+    assert.match(body, /下面是老大刚发来的/)
+    assert.match(body, /在吗/)
+    second.channel.stop()
+  } finally {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
+    } catch {}
+  }
 })

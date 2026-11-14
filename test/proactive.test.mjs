@@ -68,8 +68,54 @@ test('心情好、也有一阵没说话 → 想分享', () => {
   assert.equal(plan.kind, 'glad')
 })
 
-test('默认值保守：4 小时内最多一次、一天最多 3 次', () => {
-  assert.equal(PROACTIVE_DEFAULTS.minIntervalHours, 4)
+test('情绪没劲的时候不硬装开心：想分享这条不开口', () => {
+  const plan = planProactive({
+    now: NOON,
+    mood: { valence: 0.5, arousal: 0.6 },
+    affects: [affect('依恋', 0.3)],
+    lastUserAt: hourAgo(4),
+    qing: { mood: 20, hurt: 0 },
+  })
+  assert.equal(plan.send, false)
+
+  const fine = planProactive({
+    now: NOON,
+    mood: { valence: 0.5, arousal: 0.6 },
+    affects: [affect('依恋', 0.3)],
+    lastUserAt: hourAgo(4),
+    qing: { mood: 50, hurt: 0 },
+  })
+  assert.equal(fine.send, true)
+  assert.equal(fine.kind, 'glad')
+})
+
+test('情绪很沉的时候更克制：刚找过的那点间隔也拉长一半', () => {
+  const base = { now: NOON, mood: { valence: 0.1, arousal: 0.3 }, affects: [affect('依恋', 0.6)] }
+  const light = planProactive({ ...base, lastUserAt: hourAgo(7), lastAt: hourAgo(4.5) })
+  assert.equal(light.send, true, '心情正常时 4.5 小时就够了')
+
+  const heavy = planProactive({ ...base, lastUserAt: hourAgo(7), lastAt: hourAgo(4.5), qing: { mood: 20, hurt: 0 } })
+  assert.equal(heavy.send, false)
+  assert.match(heavy.reason, /刚找过/)
+})
+
+test('心里还堵着的时候，不是撒气，是想问一句', () => {
+  const plan = planProactive({
+    now: NOON,
+    mood: { valence: 0.1, arousal: 0.3 },
+    affects: [affect('依恋', 0.6)],
+    lastUserAt: hourAgo(5),
+    qing: { mood: 45, hurt: 45 },
+  })
+  assert.equal(plan.send, true)
+  assert.equal(plan.kind, 'miss')
+  assert.match(plan.reason, /堵/)
+
+  const text = proactiveText('miss', { qing: { hurt: 45 } })
+  assert.match(text, /闷/)
+})
+
+test('默认值保守：4 小时内最多一次、一天最多 3 次', () => {  assert.equal(PROACTIVE_DEFAULTS.minIntervalHours, 4)
   assert.equal(PROACTIVE_DEFAULTS.maxPerDay, 3)
   assert.equal(PROACTIVE_DEFAULTS.target, '')
 })

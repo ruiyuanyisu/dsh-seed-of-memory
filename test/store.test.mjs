@@ -59,17 +59,35 @@ test('fact key change retires the old row and links it', () => {
   done(ctx)
 })
 
-test('two confident conflicting facts stay pending', () => {
+test('他说了新的，就按新的来；旧条退场留链', () => {
   const ctx = fresh()
   const a = ctx.store.remember({
-    layer: 'semantic', text: '她住在南京', factKey: '她.城市', source: 'user-said',
+    layer: 'semantic', text: '他喜欢夜里听雨', factKey: '他.偏好.雨', source: 'user-said',
   })
   const b = ctx.store.remember({
-    layer: 'semantic', text: '她最喜欢杭州，因为外婆家在那里', factKey: '她.城市', source: 'user-said',
+    layer: 'semantic', text: '他现在更喜欢早上听雨', factKey: '他.偏好.雨', source: 'user-said',
+  })
+  assert.equal(b.action, 'superseded')
+  assert.equal(ctx.store.get(a.id).status, 'retired')
+  assert.equal(ctx.store.get(a.id).superseded_by, b.id)
+  assert.equal(ctx.store.get(b.id).status, 'active')
+  assert.equal(ctx.store.countPending(), 0)
+  done(ctx)
+})
+
+test('我猜的跟已有的撞了，才挂起来等人定', () => {
+  const ctx = fresh()
+  const a = ctx.store.remember({
+    layer: 'semantic', text: '他住在南京', factKey: '他.城市', source: 'user-said',
+  })
+  const b = ctx.store.remember({
+    layer: 'semantic', text: '他最喜欢杭州，因为外婆家在那里', factKey: '他.城市',
+    source: 'inferred', confidence: 0.85,
   })
   assert.equal(b.action, 'conflict')
   assert.equal(ctx.store.get(a.id).status, 'active')
   assert.equal(ctx.store.get(b.id).status, 'pending')
+  assert.equal(ctx.store.countPending(), 1)
   done(ctx)
 })
 
@@ -157,5 +175,61 @@ test('card ordering follows mood bias', () => {
   const sadCard = ctx.store.card({ bias: { valence: -0.7, weight: 0.15, valenceOf } }).text
   assert.ok(happyCard.indexOf('笑得很开心') < happyCard.indexOf('那天很难过'))
   assert.ok(sadCard.indexOf('那天很难过') < sadCard.indexOf('笑得很开心'))
+  done(ctx)
+})
+
+test('卡片遇到坏时间戳和空记录也不写 NaN', () => {
+  const ctx = fresh()
+  ctx.store.remember({ text: '一条正常的记忆', layer: 'episodic', importance: 0.6 })
+  // 坏时间戳（老版本或手改库才可能出现）：不能把 NaN-NaN 写进卡片
+  ctx.db.exec(`UPDATE memories SET recorded_at = 'oops', occurred_at = 'oops'`)
+  const card = ctx.store.card({ budget: 600 }).text
+  assert.ok(card.includes('一条正常的记忆'), card)
+  assert.ok(!/NaN/.test(card), card)
+  // 空正文记录不该占一行
+  ctx.db.exec(
+    `INSERT INTO memories (id, layer, text, norm, source, confidence, importance, valid_from, recorded_at, status, scope, meta)
+     VALUES ('empty-row', 'episodic', '   ', 'e', 'user-said', 0.5, 0.5, 0, 1794577299240, 'active', 'shared', '{}')`,
+  )
+  const card2 = ctx.store.card({ budget: 600 }).text
+  assert.ok(!card2.split('\n').some((line) => line.trim() === '-'), card2)
+  assert.ok(!/NaN/.test(card2), card2)
+  done(ctx)
+})
+test('挂起的也能定下来：keep 之后转正、旧的退场留链', () => {
+  const ctx = fresh()
+  const a = ctx.store.remember({
+    layer: 'semantic', text: '他住在南京', factKey: '他.城市', source: 'user-said',
+  })
+  const b = ctx.store.remember({
+    layer: 'semantic', text: '他其实常年在杭州，外婆家在那儿', factKey: '他.城市',
+    source: 'inferred', confidence: 0.85,
+  })
+  assert.equal(b.action, 'conflict')
+  assert.equal(ctx.store.countPending(), 1)
+
+  const promoted = ctx.store.promotePending(b.id)
+  assert.equal(promoted.status, 'active')
+  const old = ctx.store.get(a.id)
+  assert.equal(old.status, 'retired')
+  assert.equal(old.superseded_by, b.id)
+  assert.equal(ctx.store.countPending(), 0)
+
+  // 已经不是 pending 了，再 keep 一次不该有任何动作
+  assert.equal(ctx.store.promotePending(b.id), null)
+  done(ctx)
+})
+test('一条超长记忆不该把整张卡挡空', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  // 最新那条是粘进来的一整篇长文；后面两件事仍然要看得到
+  ctx.store.remember({ layer: 'episodic', text: '雨'.repeat(2000), source: 'user-said', now: now - 3000 })
+  ctx.store.remember({ layer: 'episodic', text: '他今天把话说软了一点', source: 'user-said', now: now - 2000 })
+  ctx.store.remember({ layer: 'episodic', text: '他喜欢夜里听雨', source: 'user-said', now: now - 1000 })
+  const card = ctx.store.card({ budget: 600 })
+  assert.match(card.text, /他喜欢夜里听雨/)
+  assert.match(card.text, /把话说软了一点/)
+  assert.ok(!card.text.includes('雨雨雨雨'), '超长那条不该整篇贴上卡')
+  assert.ok(card.text.length <= 600)
   done(ctx)
 })

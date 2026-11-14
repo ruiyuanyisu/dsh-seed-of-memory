@@ -3,13 +3,32 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import test from 'node:test'
+import test, { after } from 'node:test'
 
-import { EmbeddingRuntime } from '../lib/embedding.js'
+import { EmbeddingRuntime, autoInitEnabled } from '../lib/embedding.js'
+
+test('语义检索关掉就不该去装/拉 embedding 运行时', () => {
+  assert.equal(autoInitEnabled({}), true)
+  assert.equal(autoInitEnabled({ semanticEnabled: true }), true)
+  assert.equal(autoInitEnabled({ semanticEnabled: false }), false)
+  assert.equal(autoInitEnabled(undefined), true)
+})
+
+const TEMP_DIRS = []
 
 function tmpdir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  TEMP_DIRS.push(dir)
+  return dir
 }
+
+after(() => {
+  for (const dir of TEMP_DIRS) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
+    } catch {}
+  }
+})
 
 test('scan 只认像安装包的 zip，且忽略过小的文件', () => {
   const dir = tmpdir('seed-scan-')
