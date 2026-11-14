@@ -12,6 +12,8 @@ permissions:
 jobs:
   npm:
     runs-on: ubuntu-latest
+    env:
+      PKG_NAME: dsh-seed-of-memory
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,7 +23,19 @@ jobs:
         run: npm --version
       - name: Verify package
         run: node --check lib/index.js
+      # 版本已经在 npm 上就别再硬发：重复跑不会红，也不会因为 409 让人以为坏了。
+      - name: Already published?
+        id: check
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$PKG_NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$PKG_NAME@$VERSION 已经在 npm 上了，跳过发布。"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       # Trusted publishing (OIDC)：不需要 NPM_TOKEN。
       # npm 上这个包的 Trusted publisher 要填 ruiyuanyisu / dsh-seed-of-memory / publish.yml
       - name: Publish
+        if: steps.check.outputs.skip != 'true'
         run: npm publish --access public
