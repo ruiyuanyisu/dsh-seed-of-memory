@@ -1,6 +1,6 @@
 # 使用说明
 
-这是 Seed of Memory 的说明书。面板里的每一页、每个配置项、常见问题，都写在这里。
+这是 Seed of Memory 的说明书（对应 1.4.2）。面板里的每一页、每个配置项、常见问题，都写在这里。
 
 ## 它是什么
 
@@ -12,6 +12,7 @@
 
 - 安装：`plugin_manager install_bundle dsh-seed-of-memory`
 - 升级：再执行一次同一条命令，装到最新版
+- 不用 npm 也行：拿到「更新包」zip 后解压，关掉 DSH，右键 `update.ps1` →「使用 PowerShell 运行」。脚本会自己找 `~\.dsh\profiles\*\node_modules\dsh-seed-of-memory`，先备份成 `.bak-日期-时间` 再替换，失败自动还原；只想先看会做什么就加 `-DryRun`，装在别处就加 `-Target "<那个目录>"`。装完重开 DSH。
 - 停用：`plugin_manager set_plugin dsh-seed-of-memory` 关掉 enabled（数据不动）
 - 数据目录：`~/.dsh/seed-of-memory/`（Windows 是 `C:\Users\<你>\.dsh\seed-of-memory\`）
   - `seed.db`：全部记忆
@@ -41,6 +42,8 @@
 
 语音模型解压到固定位置后，在 `qq.json` 里把 `asrModel` 填成文件夹的完整路径，例如 `"D:\\models\\whisper\\faster-whisper-large-v3"`（JSON 里反斜杠写两个）；`asrModelsDir` 留空。还需要 `pip install faster-whisper`。
 
+没有显卡也能用：识别脚本默认 `--device auto`，先试显卡，起不来就退回 CPU（`int8`，慢一些但能用）。想钉死就填 `"asrDevice": "cpu"`、`"asrComputeType": "int8"`；有卡想用 `float16` 就填 `"asrDevice": "cuda"`。
+
 ## 面板每一页
 
 - **概览**：此刻的心情、记忆条数与分层、常驻卡大小、存储剩余空间、离线资源入口
@@ -69,6 +72,22 @@
 - `seed_consolidate`：整理记忆分层（预览或执行）
 - `seed_compat`：和别的记忆插件打交道（只读）：`detect` 看现场装了谁、`preview` 先看几条、`import` 搬进 Seed（可 `dryRun`）、`export` 导出 jsonl / md
 
+## 命令
+
+在对话里直接打 `/seed` 开头的命令就行（不用记全部，`/seed help` 会列出来）：
+
+- `/seed status`：一共多少条、各层多少、备份几份、卡片多大、有几个挂起等你说清的
+- `/seed search <词>`：按词找记忆（语义检索开着时按意思找）；`/seed open <编号或 id>`：打开那一条的上下文
+- `/seed remember <内容>`：记一条；`/seed why <id>`：看某条是怎么来的（含取代链）
+- `/seed forget <id>`：彻底删掉一条（索引一起删，不可恢复）
+- `/seed mood`：此刻的心情、情绪内核四个数、最近那一下；`/seed feel`：手动记一份感受
+- `/seed pending` / `/seed keep <id>`：同一个键有过两种说法、被挂起的那些，看完再决定留哪句
+- `/seed anchor <一句话>` / `/seed grow <一句话>`：往「我们之间」/「我是谁」加一句（根不能用命令改）
+- `/seed believe <一句话>` / `/seed trait <名字>` / `/seed habit <习惯>` / `/seed aspire <一句话>`：认知、特质、说话习惯、想成为什么样的人
+- `/seed consolidate`：整理分层（先预览，确认了再加 `apply`）
+- `/seed backup`：当场存一份库快照；`/seed sources`：外部档案源；`/seed export`：导出一份能带走的
+- `/seed bili` / `/seed proactive`：刷B站摘要、主动消息的手动触发
+
 ## 配置
 
 插件配置在宿主的插件设置里，常用的：
@@ -82,6 +101,7 @@
 - `emotionBaseline`：积极性回到的常态值，默认 50
 - `emotionRecordAt`：多大的情绪才顺手记成一条记忆，默认 0.3（越大越少记）
 - `extraPraise` / `extraBlame` / `extraSoft`：给你的词表加几个词（数组），比如 `["傻鱼"]` 算重话
+- `historyFile`：QQ 每个会话「刚才聊到哪」的本地账本，默认 `~/.dsh/seed-of-memory/qq-history.json`（删了只丢「重启接话」，记忆本体不受影响）
 
 ## 情绪内核
 
@@ -105,6 +125,7 @@
 - 大的那一下顺手记成一条情绪：心情会跟着偏，关系账也会动（不用再单独调 `seed_feel`）。
 - 现场装了「阴晴（dsh-yinqing）」时，我们不再往卡片里塞情绪行，免得两个「此刻」打架；打分照常记着。
 - 不想用就关：配置里 `"emotion": false`，不记、不上卡；`seed_qing status` 第一行会写明「情绪内核已关」，`test` 只是预演。
+- 想加词不用重启：词表在 `lib/qing-words.json`（九张表：夸 / 挑毛病 / 重话 / 出事 / 催 / 噪声 / 道歉 / 靠过来 / 累了）。改完存盘，下一句话就用新的；写坏了会沿用上一份，不报错。改 `lib/` 里的 `.js` 仍然要重载插件或重启 DSH。
 
 ## 和别的记忆插件一起用
 
@@ -126,6 +147,12 @@
 2. 浏览器打开 `http://127.0.0.1:5099`，扫码登录要挂机的 QQ 号。
 3. SnowLuma → 设置 → OneBot 11：HTTP `3000` 与 WebSocket `3001` 都打开，用同一个 `accessToken`。
 4. 在面板填 `wsUrl` / `httpUrl` / `accessToken` 和白名单，保存并连接。
+
+保存不会无缘无故断线：只有换地址、换令牌、开关通道会重连；改白名单、群策略、语气、语音这些，通道下一句就按新的来。
+
+宿主自己出岔子时不会把一串 `RemoteError` 发进聊天：那种回复会换成「刚才那边卡了一下，没接上——你再说一遍？」，原文只留日志；那串报错万一被当成一条消息递进来，也不回它、不记成你说的话。
+
+QQ 的会话会自动挂进对应工作区：建好会话后按它自己的 `cwd` 找同名工作区挂进去，侧栏就不再堆「未分组」。要是这份旧会话记录本身坏了（比如它当初挂的插件后来被禁用，`resume failed … never started`），会换一个带时间戳的新 id 重建，旧记录留在盘上不动——聊天不会一直哑着。换过 id 会记在 `qq-history.json` 里，重启还接着聊同一份；配置里的 `cwd` 改了，旧会话（老目录建的）会自动换成新目录的一份；`/reset` 也是真的换一份新的，不是把旧的恢复回来。
 
 回复会按句子拆成 1–3 条气泡、中间隔一会儿（`burstMax` / `burstGapMs` 可调，`"burst": false` 关掉）。万一一句都没答上来，会说一句「刚才卡了一下，没说出话——你再说一遍？」，不想看见就设 `"silentFallback": false`。
 

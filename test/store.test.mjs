@@ -59,6 +59,17 @@ test('fact key change retires the old row and links it', () => {
   done(ctx)
 })
 
+test('同一个事实键前后多打了空格，也算同一件事', () => {
+  const ctx = fresh()
+  const a = ctx.store.remember({ layer: 'semantic', text: '他怕冷', factKey: '他.怕冷', source: 'user-said' })
+  const b = ctx.store.remember({ layer: 'semantic', text: '他真的很怕冷', factKey: '  他.怕冷  ', source: 'user-said' })
+  assert.equal(b.action, 'superseded')
+  assert.equal(ctx.store.get(a.id).superseded_by, b.id)
+  const sameKey = ctx.store.list({ includeRetired: false, limit: 20 }).filter((row) => row.fact_key === '他.怕冷')
+  assert.equal(sameKey.length, 1)
+  done(ctx)
+})
+
 test('他说了新的，就按新的来；旧条退场留链', () => {
   const ctx = fresh()
   const a = ctx.store.remember({

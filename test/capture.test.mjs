@@ -149,3 +149,18 @@ test('「记住：」这种开头不算事情本身', () => {
     assert.equal(again.length, 1)
   })
 })
+
+test('说别记的，就真的别进待记', () => {
+  withDb(() => {
+    assert.equal(extractCandidates('别记住这件事，我就是随口一说').length, 0)
+    assert.equal(extractCandidates('不要记这个').length, 0)
+
+    // 「别忘记」是要记（别+忘 是反话），不能当成「别记」
+    assert.equal(extractCandidates('别忘了带钥匙，明天要出门').length, 1)
+    // 「别记错了」本身没有「记住 / 别忘了」这种线索，不该冒出候选
+    assert.equal(extractCandidates('别记错了，下周三交材料').length, 0)
+
+    // 顺带：一句「记得提醒我…」也该算线索
+    assert.equal(extractCandidates('记得提醒我周末去山里').length, 1)
+  })
+})

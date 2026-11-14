@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,23 +46,34 @@ function makeEnv() {
   }
 
   let onDispose = null
+  const routes = []
+
+  const services = {
+    tools: {
+      register(definition) {
+        tools.push(definition)
+        return () => {}
+      },
+    },
+    commands: {
+      register(definition) {
+        commands.push(definition)
+        return () => {}
+      },
+    },
+    webServer: {
+      register(route) {
+        routes.push(route)
+        return () => {}
+      },
+    },
+  }
 
   const ctx = {
-    inject(_names, callback) {
-      return callback({
-        tools: {
-          register(definition) {
-            tools.push(definition)
-            return () => {}
-          },
-        },
-        commands: {
-          register(definition) {
-            commands.push(definition)
-            return () => {}
-          },
-        },
-      })
+    inject(names, callback) {
+      const picked = {}
+      for (const name of names) picked[name] = services[name]
+      return callback(picked)
     },
     on(event, handler) {
       if (event === 'dispose') onDispose = handler
@@ -73,7 +85,7 @@ function makeEnv() {
     try { onDispose?.() } catch {}
     try { rmSync(home, { recursive: true, force: true, maxRetries: 3 }) } catch {}
   }
-  return { home, ctx, tools, commands, prompts, disposers, inbox: inboxHandlers, cleanup, emitInbox }
+  return { home, ctx, tools, commands, prompts, disposers, inbox: inboxHandlers, routes, cleanup, emitInbox }
 }
 
 test('registers the seed tools with valid schema', () => {
@@ -447,6 +459,71 @@ test('打包清单带上 asr 脚本（默认路径就指向包里的 asr/asr_onc
   assert.ok(pkg.files.includes('asr'), 'files 里要带 asr')
   assert.ok(existsSync(new URL('asr/asr_once.py', root)), 'asr/asr_once.py 要真的在')
 })
+test('保存 QQ 设置：连接参数没变就不重连，变了才重连', async () => {
+  const env = makeEnv()
+  apply(env.ctx, {
+    budget: 600,
+    qq: { enabled: false, wsUrl: 'ws://127.0.0.1:1', httpUrl: 'http://127.0.0.1:1', allowPrivate: ['10001'] },
+  })
+  try {
+    const route = env.routes.find((entry) => entry.path === '/dsh-seed-of-memory/qq/config')
+    assert.ok(route, '没注册 /qq/config')
+    const post = (body) =>
+      new Promise((resolve) => {
+        const req = new EventEmitter()
+        req.method = 'POST'
+        const res = {
+          writableEnded: false,
+          writeHead(status) {
+            this.status = status
+          },
+          end(text) {
+            this.body = String(text)
+            this.writableEnded = true
+            resolve(this)
+          },
+        }
+        route.handler(req, res)
+        req.emit('data', Buffer.from(JSON.stringify(body), 'utf8'))
+        req.emit('end')
+      })
+
+    const same = await post({ allowPrivate: ['10001', '10002'], autoReply: true })
+    const first = JSON.parse(same.body)
+    assert.equal(first.ok, true)
+    assert.equal(first.restarted, false, '只改白名单不该断线')
+
+    const moved = await post({ wsUrl: 'ws://127.0.0.1:2' })
+    assert.equal(JSON.parse(moved.body).restarted, true, '换地址要重连')
+  } finally {
+    env.cleanup()
+  }
+})
+test('缺必填参数的时候给一句用法，不是抛错', async () => {
+  const env = makeEnv()
+  apply(env.ctx, { budget: 600 })
+  try {
+    for (const name of ['seed_remember', 'seed_believe', 'seed_trait', 'seed_aspire', 'seed_habit', 'seed_feel']) {
+      const def = env.tools.find((tool) => tool.name === name)
+      assert.ok(def, `没注册 ${name}`)
+      const out = await def.execute({})
+      const text = typeof out === 'string' ? out : out?.text
+      assert.equal(typeof text, 'string', `${name} 没返回文字`)
+      assert.ok(text.trim().length > 0, `${name} 什么都不说`)
+    }
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('词表 json 也进包（少了它情绪内核会静默失灵）', async () => {  const root = new URL('../', import.meta.url)
+  const { readFileSync, existsSync } = await import('node:fs')
+  const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
+  assert.ok(pkg.files.includes('lib'), 'files 里要带 lib')
+  assert.ok(existsSync(new URL('lib/qing-words.json', root)), 'lib/qing-words.json 要真的在')
+  const words = JSON.parse(readFileSync(new URL('lib/qing-words.json', root), 'utf8'))
+  assert.ok(Array.isArray(words.PRAISE) && words.PRAISE.length > 0, '词表不能是空的')
+})
 test('挂着的能列出来、也能一句话定下来', async () => {
   const env = makeEnv()
   apply(env.ctx, { budget: 600 })
@@ -507,11 +584,12 @@ test('打包目录里别混进临时/备份文件', () => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name)
       if (entry.isDirectory()) { walk(full); continue }
-      if (!entry.name.endsWith('.js')) strays.push(full)
+      // .json 是数据文件（词表就在 lib/qing-words.json），其余一律不许进包
+      if (!/\.(js|json)$/.test(entry.name)) strays.push(full)
     }
   }
   walk(join(decodeURIComponent(root), 'lib'))
-  assert.deepEqual(strays, [], 'lib 里只该有 .js：' + strays.join(', '))
+  assert.deepEqual(strays, [], 'lib 里只该有 .js / .json：' + strays.join(', '))
 })
 test('/seed 每条子命令都得给句话，别沉默', async () => {
   const env = makeEnv()

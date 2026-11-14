@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -111,6 +111,31 @@ test('备份状态说得出几份、多大', () => {
     assert.equal(status.count, 2)
     assert.equal(status.bytes, 7)
     assert.equal(status.latest, `${BACKUP_PREFIX}2026-11-14`)
+  } finally {
+    box.dispose()
+  }
+})
+
+test('清理只删真备份，同名目录和怪文件不碰，也不谎报删了', () => {
+  const box = workspace()
+  try {
+    for (const day of ['2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14']) {
+      writeFileSync(join(box.dir, `${BACKUP_PREFIX}${day}`), 'x')
+    }
+    mkdirSync(join(box.dir, `${BACKUP_PREFIX}2020-01-01`), { recursive: true })
+    writeFileSync(join(box.dir, `${BACKUP_PREFIX}2020-01-02.txt`), 'not a real backup')
+    writeFileSync(join(box.dir, `${BACKUP_PREFIX}old`), 'not a real backup either')
+
+    const removed = pruneBackups(box.dir, 2)
+    assert.deepEqual(removed, [`${BACKUP_PREFIX}2026-11-10`, `${BACKUP_PREFIX}2026-11-11`, `${BACKUP_PREFIX}2026-11-12`])
+    const left = readdirSync(box.dir).sort()
+    assert.deepEqual(left, [
+      `${BACKUP_PREFIX}2020-01-01`,
+      `${BACKUP_PREFIX}2020-01-02.txt`,
+      `${BACKUP_PREFIX}2026-11-13`,
+      `${BACKUP_PREFIX}2026-11-14`,
+      `${BACKUP_PREFIX}old`,
+    ])
   } finally {
     box.dispose()
   }

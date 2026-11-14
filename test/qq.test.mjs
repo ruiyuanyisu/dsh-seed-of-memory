@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { QqChannel, splitBubbles, voiceFallback, voiceCadence } from '../lib/qq/channel.js'
+import { QqChannel, splitBubbles, voiceFallback, voiceCadence, samePath } from '../lib/qq/channel.js'
+import { QqHistory } from '../lib/qq/history.js'
 import { ownerTarget } from '../lib/qq/proactive.js'
 import { segmentsOf, textOf, mentionedSelf, fallbackUserMessage, wantsVoice } from '../lib/qq/message.js'
 
@@ -82,7 +83,7 @@ function fakeAgents({ reply = '好的，我记住了。', failResume = true } = 
 
 let channelRef = null
 
-function makeChannel({ config = {}, agents, client = new FakeClient(), onLog } = {}) {
+function makeChannel({ config = {}, agents, client = new FakeClient(), onLog, attachWorkspace = null, history = null } = {}) {
   const merged = {
     ...QqChannel.defaults(),
     enabled: true,
@@ -90,7 +91,7 @@ function makeChannel({ config = {}, agents, client = new FakeClient(), onLog } =
     allowGroups: ['123456'],
     ...config,
   }
-  const channel = new QqChannel({ client, agents: agents ?? fakeAgents(), config: merged, logger: console, onLog })
+  const channel = new QqChannel({ client, agents: agents ?? fakeAgents(), config: merged, logger: console, onLog, attachWorkspace, history })
   channelRef = channel
   return { channel, client }
 }
@@ -166,6 +167,50 @@ test('一句话都没答上来时说一声，不让人对着空气说话', async
   const sent = client.calls.filter((call) => call.action === 'send_private_msg')
   assert.equal(sent.length, 1)
   assert.match(sent[0].params.message[0].data.text, /卡了一下/)
+})
+
+test('宿主内部出错时，别把 RemoteError 那串原文发进聊天', async () => {
+  const { channel, client } = makeChannel({
+    agents: fakeAgents({ reply: '```\n: RemoteError: gateway/internal: resume failed for session "x": core-memory (dsh-core-memory): never started\n```' }),
+  })
+  channel.start()
+  await channel.handleEvent({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 11,
+    message: [{ type: 'text', data: { text: '在吗' } }],
+  })
+  const sent = client.calls.filter((call) => call.action === 'send_private_msg')
+  assert.equal(sent.length, 1)
+  const text = sent[0].params.message[0].data.text
+  assert.doesNotMatch(text, /RemoteError|never started|resume failed/)
+  assert.match(text, /卡了一下/)
+  assert.ok(channel.status().log.some((line) => line.kind === 'debug' && /内部错误/.test(line.text)))
+})
+
+test('宿主的报错被当成一条消息递进来时，不回它、也不记成他说的话', async () => {
+  const { channel, client } = makeChannel({ agents: fakeAgents({ reply: '收到' }) })
+  channel.start()
+  await channel.handleEvent({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 12,
+    message: [
+      {
+        type: 'text',
+        data: { text: '⚠️ 消息未被接受：gateway/internal: resume failed for session "x": RemoteError: core-memory (dsh-core-memory): never started' },
+      },
+    ],
+  })
+  const sent = client.calls.filter((call) => call.action === 'send_private_msg')
+  assert.equal(sent.length, 0, '不该拿这串报错去回话')
+  assert.ok(channel.status().log.some((line) => line.kind === 'skip' && /内部报错/.test(line.text)))
+  const history = channel.history?.get?.('private:10001') ?? []
+  assert.equal(history.length, 0, '报错不是他说的，别记进历史')
 })
 
 test('关了 silentFallback 就安静着', async () => {
@@ -301,6 +346,15 @@ test('splitBubbles：按句号拆成多条，最多 max 条，剩下的并进最
   assert.equal(capped.join(''), '一。二。三。四。五。六。')
   assert.deepEqual(splitBubbles('没有句号的句子', 3), ['没有句号的句子'])
   assert.deepEqual(splitBubbles('   ', 3), [])
+})
+
+test('一整段没有标点也别拆成一串小消息，更不能整条超长', () => {
+  for (const text of ['a'.repeat(5000), '没有标点'.repeat(1000), '你好。'.repeat(200)]) {
+    const bubbles = splitBubbles(text)
+    assert.ok(bubbles.length <= 6, `气泡太多：${bubbles.length}`)
+    assert.ok(Math.max(...bubbles.map((b) => b.length)) <= 1200, '单条太长，QQ 会拒收')
+    assert.equal(bubbles.join('').replace(/\s+/g, ''), text.replace(/\s+/g, ''), '切的时候不能丢字')
+  }
 })
 
 test('ownerQQ 解析出的地址能真的走 say 发到私聊', async () => {
@@ -453,6 +507,13 @@ test('想听一条语音的时候，不用等「每隔三条」', async () => {
   assert.equal(wantsVoice('语音识别又坏了'), false)
   assert.equal(wantsVoice('这个插件带语音功能吗'), false)
   assert.equal(wantsVoice(''), false)
+  // 说了「别发语音」就是不要，别顺着字面发；「我发了一条语音给你」是在说他自己。
+  assert.equal(wantsVoice('别发语音了'), false)
+  assert.equal(wantsVoice('不用发语音'), false)
+  assert.equal(wantsVoice('不要发语音'), false)
+  assert.equal(wantsVoice('我发了一条语音给你'), false)
+  assert.equal(wantsVoice('我刚刚给你发了条语音'), false)
+  assert.equal(wantsVoice('可以发个语音吗'), true)
 
   const msg = (id, text) => ({
     post_type: 'message',
@@ -514,4 +575,315 @@ test('重启之后还记得刚才聊到哪：qq-history 接上话', async () => 
       rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
     } catch {}
   }
+})
+test('旧会话记录坏掉时，换一个新 id 也要把会话建起来', async () => {
+  const seen = []
+  const agents = {
+    get() {
+      return null
+    },
+    async resume() {
+      throw new Error('RemoteError: core-memory: never started')
+    },
+    async create({ sessionId }) {
+      seen.push(sessionId)
+      // 第一次用原来的 id 建：宿主会先去恢复那份坏记录，照样炸
+      if (seen.length === 1) throw new Error('resume failed for session "x": never started')
+      return { agent: { followup() {}, async whenIdle() {} }, dispose() {} }
+    },
+  }
+  const { channel, client } = makeChannel({ agents, config: { replyTimeoutMs: 40, silentFallback: false } })
+  channel.start()
+  await channel.handleEvent({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 31,
+    message: [{ type: 'text', data: { text: '在吗' } }],
+  })
+  assert.equal(seen.length, 2, '第一个 id 建不起来时，应该换一个新 id 再试一次')
+  assert.match(seen[1], /^seedqq-[a-z0-9]+-r[a-z0-9]+$/)
+  // 会话确实建起来了（没丢消息，只是这一轮没内容可回）
+  assert.equal(channel.records.size, 1)
+  channel.stop()
+})
+
+test('会话建好就顺手挂进工作区，cwd 对不上就不挂', async () => {
+  const attached = []
+  const attachWorkspace = async (sessionId, cwd) => {
+    attached.push({ sessionId, cwd })
+    return true
+  }
+  const withCwd = makeChannel({ config: { cwd: 'E:\\cz', replyTimeoutMs: 40 }, attachWorkspace })
+  withCwd.channel.start()
+  await withCwd.channel.handleEvent({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 41,
+    message: [{ type: 'text', data: { text: '在吗' } }],
+  })
+  withCwd.channel.stop()
+  assert.equal(attached.length, 1)
+  assert.match(attached[0].sessionId, /^seedqq-/)
+  assert.equal(attached[0].cwd, 'E:\\cz')
+
+  const noCwd = makeChannel({ config: { cwd: '', replyTimeoutMs: 40 }, attachWorkspace })
+  noCwd.channel.start()
+  await noCwd.channel.handleEvent({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: 42,
+    message: [{ type: 'text', data: { text: '在吗' } }],
+  })
+  noCwd.channel.stop()
+  assert.equal(attached.length, 1, '没有 cwd 就不用去挂')
+})
+
+test('samePath：大小写、斜杠、尾部分隔符都不计较', () => {
+  assert.equal(samePath('E:\\Carys', 'e:/carys/'), true)
+  assert.equal(samePath('E:\\Carys', 'E:\\cz'), false)
+  assert.equal(samePath('', 'E:\\Carys'), false)
+  assert.equal(samePath(undefined, undefined), false)
+})
+
+function privateEvent(id, text) {
+  return {
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: id,
+    message: [{ type: 'text', data: { text } }],
+  }
+}
+
+test('配置里的 cwd 变了，旧会话会换成新会话，并记住换过的 id', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seedqq-map-'))
+  const file = join(dir, 'qq-history.json')
+  const created = []
+  const attached = []
+  const stock = () => ({ header: { cwd: 'E:\\cz' }, followup() {}, async whenIdle() {} })
+  const agents = {
+    get() {
+      return null
+    },
+    async resume() {
+      return { agent: stock(), dispose() {} }
+    },
+    async create({ sessionId, meta }) {
+      created.push({ sessionId, cwd: meta?.cwd })
+      return {
+        agent: {
+          header: { cwd: meta?.cwd },
+          followup() {
+            setTimeout(() => {
+              channelRef?.onSessionEvent(
+                { header: { id: sessionId } },
+                { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '嗯。' }] } } },
+              )
+            }, 5)
+          },
+          async whenIdle() {},
+        },
+        dispose() {},
+      }
+    },
+  }
+  const history = new QqHistory(file)
+  const { channel } = makeChannel({
+    agents,
+    history,
+    config: { cwd: 'E:\\Carys', replyTimeoutMs: 30, silentFallback: false },
+    attachWorkspace: async (sessionId, cwd) => {
+      attached.push({ sessionId, cwd })
+    },
+  })
+  channel.start()
+  await channel.handleEvent(privateEvent(61, '在吗'))
+  channel.stop()
+
+  assert.equal(created.length, 1, '旧会话的 cwd 不对，应该重开一份')
+  assert.match(created[0].sessionId, /-r[a-z0-9]+$/)
+  assert.equal(created[0].cwd, 'E:\\Carys')
+  assert.equal(attached.at(-1)?.cwd, 'E:\\Carys')
+  const mapped = history.sessionOf('private:10001')
+  assert.equal(mapped, created[0].sessionId)
+  history.dispose()
+
+  // 落盘了：另开一个账本读回来还是这个 id
+  const reread = new QqHistory(file).load()
+  assert.equal(reread.sessionOf('private:10001'), created[0].sessionId)
+  reread.dispose()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('换过 id 之后重启，还接着用记下来的那个会话', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seedqq-remap-'))
+  const file = join(dir, 'qq-history.json')
+  const first = []
+  const agents1 = {
+    get() {
+      return null
+    },
+    async resume() {
+      throw new Error('no session')
+    },
+    async create({ sessionId, meta }) {
+      first.push(sessionId)
+      return {
+        agent: {
+          header: { cwd: meta?.cwd },
+          followup() {
+            setTimeout(() => {
+              channelRef?.onSessionEvent(
+                { header: { id: sessionId } },
+                { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '嗯。' }] } } },
+              )
+            }, 5)
+          },
+          async whenIdle() {},
+        },
+        dispose() {},
+      }
+    },
+  }
+  const history1 = new QqHistory(file)
+  const one = makeChannel({ agents: agents1, history: history1, config: { cwd: 'E:\\Carys', replyTimeoutMs: 30, silentFallback: false } })
+  one.channel.start()
+  await one.channel.handleEvent(privateEvent(71, '在吗'))
+  one.channel.stop()
+  const kept = first[0]
+  assert.match(kept, /^seedqq-[a-z0-9]+$/)
+  history1.dispose()
+
+  // 重启：账本里有 id，就该先 resume 这个 id（而不是回到老的 hash id 再换一次）
+  const resumed = []
+  const second = []
+  const agents2 = {
+    get() {
+      return null
+    },
+    async resume({ resumeSessionId }) {
+      resumed.push(resumeSessionId)
+      throw new Error('no session')
+    },
+    async create({ sessionId }) {
+      second.push(sessionId)
+      return {
+        agent: {
+          header: { cwd: 'E:\\Carys' },
+          followup() {
+            setTimeout(() => {
+              channelRef?.onSessionEvent(
+                { header: { id: sessionId } },
+                { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '嗯。' }] } } },
+              )
+            }, 5)
+          },
+          async whenIdle() {},
+        },
+        dispose() {},
+      }
+    },
+  }
+  const history2 = new QqHistory(file)
+  const two = makeChannel({ agents: agents2, history: history2, config: { cwd: 'E:\\Carys', replyTimeoutMs: 30, silentFallback: false } })
+  two.channel.start()
+  await two.channel.handleEvent(privateEvent(72, '又来了'))
+  two.channel.stop()
+
+  assert.equal(resumed[0], kept, '重启后应该先恢复上次记下的会话')
+  assert.equal(second[0], kept, '没换 cwd 就不该再换 id')
+  history2.dispose()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('/reset 之后下一句是真正的新会话，不是把旧的恢复回来', async () => {
+  const created = []
+  const agents = {
+    get() {
+      return null
+    },
+    async resume() {
+      throw new Error('no session')
+    },
+    async create({ sessionId }) {
+      created.push(sessionId)
+      let reply = '嗯。'
+      return {
+        agent: {
+          header: { cwd: 'E:\\Carys' },
+          followup() {
+            setTimeout(() => {
+              channelRef?.onSessionEvent(
+                { header: { id: sessionId } },
+                { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: reply }] } } },
+              )
+            }, 5)
+          },
+          async whenIdle() {},
+        },
+        dispose() {},
+      }
+    },
+  }
+  const { channel } = makeChannel({ agents, config: { cwd: 'E:\\Carys', replyTimeoutMs: 40 } })
+  channel.start()
+  await channel.handleEvent(privateEvent(81, '在吗'))
+  assert.equal(created.length, 1)
+  const before = created[0]
+
+  await channel.handleEvent(privateEvent(82, '/reset'))
+  await channel.handleEvent(privateEvent(83, '重新开始吧'))
+  channel.stop()
+
+  assert.equal(created.length, 2, '/reset 之后应该重开一份会话')
+  assert.notEqual(created[1], before)
+  assert.match(created[1], /-r[a-z0-9]+$/)
+})
+
+test('连着两条消息同时到，也只建一份会话', async () => {
+  let creates = 0
+  const agents = {
+    get() {
+      return null
+    },
+    async resume() {
+      throw new Error('no session')
+    },
+    async create({ sessionId }) {
+      creates += 1
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return {
+        agent: {
+          header: { cwd: 'E:\\Carys' },
+          followup() {
+            setTimeout(() => {
+              channelRef?.onSessionEvent(
+                { header: { id: sessionId } },
+                { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '嗯。' }] } } },
+              )
+            }, 5)
+          },
+          async whenIdle() {},
+        },
+        dispose() {},
+      }
+    },
+  }
+  const { channel } = makeChannel({ agents, config: { cwd: 'E:\\Carys', replyTimeoutMs: 20, silentFallback: false } })
+  channel.start()
+  // 不 await，模拟「两条消息同一拍进来」（start 里也是 .catch 而不 await）
+  const first = channel.handleEvent(privateEvent(91, '在吗'))
+  const second = channel.handleEvent(privateEvent(92, '喂'))
+  await Promise.all([first, second])
+  const recordCount = channel.records.size
+  channel.stop()
+  assert.equal(creates, 1, '两条消息不该各建一份会话')
+  assert.equal(recordCount, 1)
 })

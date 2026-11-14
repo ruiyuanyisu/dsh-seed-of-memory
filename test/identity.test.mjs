@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -104,8 +104,7 @@ test('exportTo() copies the three anchor files', () => {
   }
 })
 
-test('writeSection keeps headings and rejects empty text', () => {
-  const dir = sandbox()
+test('writeSection keeps headings and rejects empty text', () => {  const dir = sandbox()
   try {
     const files = new IdentityFiles(dir).ensure()
     files.writeSection('us', '- 一条新的约定')
@@ -116,6 +115,30 @@ test('writeSection keeps headings and rejects empty text', () => {
     files.writeSection('anchors', '- 善良。')
     assert.match(files.readRaw().anchors, /善良/)
     assert.throws(() => files.writeSection('us', '   '))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('us.md 被改成目录（或读不了）时，不抛、不把另外两页一起丢掉', () => {
+  const dir = sandbox()
+  try {
+    const files = new IdentityFiles(dir).ensure()
+    files.read()
+    // 有人手滑把 us.md 变成了目录
+    rmSync(join(dir, 'us.md'))
+    mkdirSync(join(dir, 'us.md'))
+    const read = files.read()
+    assert.equal(typeof read.text, 'string')
+    assert.match(read.parts.anchors, /善良/)
+    assert.match(read.parts.self, /我是谁/)
+    assert.equal(read.parts.us, '')
+    const appended = files.append('us', '这句话写不进去')
+    assert.equal(appended.added, false)
+    assert.match(String(appended.error ?? ''), /EISDIR|illegal operation/i)
+    const raw = files.readRaw()
+    assert.equal(raw.us, '', '面板读坏页时给空文本，不是抛 500')
+    assert.match(raw.anchors, /善良/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -152,6 +152,28 @@ test('盘上删掉的文件，重新扫过就不再搜得到', () => {
     assert.equal(again.pruned, 1, '删掉的文件应该从索引里退场')
     assert.ok(!index.search('记忆种进', { limit: 5 }).some((hit) => hit.path === file))
     assert.equal(index.stats().files, 1)
+  } finally {
+    closeDatabase(db)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('来源漏写 id / 目录自己套自己，也不该把扫描带崩', () => {
+  const root = tempRoot()
+  const db = openDatabase(path.join(root, 'seed.db'))
+  try {
+    // 手改 sources.json 很容易漏 id；再往目录里塞一个指回上层的 junction。
+    const dir = path.join(root, '记忆本')
+    try {
+      symlinkSync(root, path.join(dir, 'loop'), 'junction')
+    } catch {
+      // 权限不允许建链接就直接跳过这一半
+    }
+    const index = new ExternalIndex(db, [{ label: '记忆本', root: dir, include: ['长期.md', '日/**'], exclude: ['总体/**'] }])
+    const result = index.scan()
+    assert.equal(result.files, 2, '两个文件仍该进索引')
+    assert.equal(result.skipped, 0, '漏 id 不该记成跳过（那是失败的信号）')
+    assert.ok(index.search('记忆种进', { limit: 5 }).length > 0)
   } finally {
     closeDatabase(db)
     rmSync(root, { recursive: true, force: true })

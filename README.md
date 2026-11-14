@@ -43,6 +43,8 @@ cd ~/.dsh/profiles/<profile>
 pnpm add dsh-seed-of-memory
 ```
 
+没有 npm 的机器（或者不想联网）：拿「更新包」zip，解压、关掉 DSH、右键 `update.ps1` →「使用 PowerShell 运行」。它会先备份 `node_modules\dsh-seed-of-memory` 再替换，失败自动还原；`-DryRun` 只看不动，`-Target` 指定别处的安装。
+
 装好后设置页会出现「记忆之种」，工具表里出现 `seed_*`，系统提示末尾开始出现：
 
 ```
@@ -195,7 +197,7 @@ pnpm add dsh-seed-of-memory
 
 `seed_inspect` 是只读入口：`what` = `self`（根 + 我是谁 + 我们之间）/ `persona`（理想与特质）/ `style`（说话习惯）/ `mood`（此刻心情）/ `affect`（对你的情感）/ `why`（某条记忆或认知的来历，传 `id`）。
 
-`seed_qing` 看当下的情绪内核：积极性 / 委屈 / 愧疚 / 压力。你每说一句话它就自己打分（先剥噪声、再认否定和反话），连着夸第三句多给三成、连着骂第三句只算六成；只报状态不教怎么演，大的那一下会顺手记成一条情绪。`status` 看状态、`test` 拿一段话试打分、`set` 手动改。
+`seed_qing` 看当下的情绪内核：积极性 / 委屈 / 愧疚 / 压力。你每说一句话它就自己打分（先剥噪声、再认否定和反话），连着夸第三句多给三成、连着骂第三句只算六成；只报状态不教怎么演，大的那一下会顺手记成一条情绪。`status` 看状态、`test` 拿一段话试打分、`set` 手动改。词表在 `lib/qing-words.json`，改完存盘下一句就生效（不用重启）。
 
 `seed_compat` 和别的记忆插件打交道（只读他们的数据）：`detect` 看现场装了谁，`preview` 先看几条，`import` 搬进 Seed（`dryRun` 可干跑），`export` 导成 jsonl / md。装了别家时记忆卡会按 `sharedBudgetRatio` 让一点预算；只装 Seed 时功能不降级。
 

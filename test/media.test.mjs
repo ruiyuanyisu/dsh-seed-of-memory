@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  asrArgs,
   recordSegments,
   looksSpeakable,
   resolveRecordFile,
@@ -12,6 +13,28 @@ import {
   voiceFileName,
   pruneVoiceFiles,
 } from '../lib/qq/media.js'
+
+test('ASR 命令行：默认 small，设备/精度配了才加参数', () => {
+  assert.deepEqual(asrArgs({}, 'C:/a.wav', 'asr.py'), ['asr.py', 'C:/a.wav', '--model', 'small'])
+  assert.deepEqual(asrArgs({ asrModel: 'C:/m/large-v3', asrModelsDir: 'C:/m' }, 'C:/a.wav', 'asr.py'), [
+    'asr.py',
+    'C:/a.wav',
+    '--model',
+    'C:/m/large-v3',
+    '--models-dir',
+    'C:/m',
+  ])
+  assert.deepEqual(asrArgs({ asrDevice: 'cpu', asrComputeType: 'int8' }, 'C:/a.wav', 'asr.py'), [
+    'asr.py',
+    'C:/a.wav',
+    '--model',
+    'small',
+    '--device',
+    'cpu',
+    '--compute-type',
+    'int8',
+  ])
+})
 
 test('recordSegments 只挑语音段', () => {
   const segments = [

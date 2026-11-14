@@ -78,8 +78,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("audio")
     parser.add_argument("--model", default="large-v3")
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--compute-type", default="float16")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--compute-type", default="auto")
     parser.add_argument("--models-dir", default=r"D:\AI\models\whisper")
     parser.add_argument("--language", default="zh")
     parser.add_argument("--hotwords", default=DEFAULT_HOTWORDS)
@@ -98,15 +98,43 @@ def main() -> int:
                 pass
 
 
+def pick_devices(args):
+    """按 --device 给出要试的 (device, compute_type) 顺序。
+
+    auto（默认）先试显卡，不成就退回 CPU——没装 CUDA 的机器也能用，只是慢一点。
+    """
+    device = str(args.device or "auto").strip().lower()
+    compute = str(args.compute_type or "auto").strip().lower()
+    if device == "auto":
+        pairs = [("cuda", "float16"), ("cpu", "int8")]
+        if compute not in ("", "auto"):
+            pairs = [("cuda", compute), ("cpu", compute)]
+        return pairs
+    if compute in ("", "auto"):
+        compute = "int8" if device == "cpu" else "float16"
+    return [(device, compute)]
+
+
 def transcribe(args, audio_path):
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(
-        args.model,
-        device=args.device,
-        compute_type=args.compute_type,
-        download_root=args.models_dir,
-    )
+    model = None
+    for device, compute in pick_devices(args):
+        try:
+            model = WhisperModel(
+                args.model,
+                device=device,
+                compute_type=compute,
+                download_root=args.models_dir,
+            )
+            if device != args.device:
+                print(f"[asr] {args.device} 不成，改用 {device}/{compute}", file=sys.stderr)
+            break
+        except Exception as error:  # noqa: BLE001 - 换设备再试，最后一起报
+            print(f"[asr] {device}/{compute} 不可用：{error}", file=sys.stderr)
+    if model is None:
+        print("[asr] 没有可用的设备（显卡和 CPU 都起不来）", file=sys.stderr)
+        return 2
 
     kwargs = {
         "language": args.language,
