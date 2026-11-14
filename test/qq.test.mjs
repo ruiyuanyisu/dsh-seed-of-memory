@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { QqChannel, splitBubbles, voiceFallback } from '../lib/qq/channel.js'
+import { QqChannel, splitBubbles, voiceFallback, voiceCadence } from '../lib/qq/channel.js'
 import { ownerTarget } from '../lib/qq/proactive.js'
-import { segmentsOf, textOf, mentionedSelf, fallbackUserMessage } from '../lib/qq/message.js'
+import { segmentsOf, textOf, mentionedSelf, fallbackUserMessage, wantsVoice } from '../lib/qq/message.js'
 
 class FakeClient extends EventEmitter {
   constructor() {
@@ -82,7 +82,7 @@ function fakeAgents({ reply = '好的，我记住了。', failResume = true } = 
 
 let channelRef = null
 
-function makeChannel({ config = {}, agents, client = new FakeClient() } = {}) {
+function makeChannel({ config = {}, agents, client = new FakeClient(), onLog } = {}) {
   const merged = {
     ...QqChannel.defaults(),
     enabled: true,
@@ -90,7 +90,7 @@ function makeChannel({ config = {}, agents, client = new FakeClient() } = {}) {
     allowGroups: ['123456'],
     ...config,
   }
-  const channel = new QqChannel({ client, agents: agents ?? fakeAgents(), config: merged, logger: console })
+  const channel = new QqChannel({ client, agents: agents ?? fakeAgents(), config: merged, logger: console, onLog })
   channelRef = channel
   return { channel, client }
 }
@@ -336,6 +336,149 @@ test('没填主人 QQ、也没填 target 时 say 不会乱发', async () => {
   assert.equal(await channel.say(target, '不该发出去'), false)
   assert.equal(client.calls.length, 0)
 })
+test('语音的节奏：off 不发，always 每次，auto 每 voiceEvery 次', () => {
+  assert.equal(voiceCadence({ mode: 'off', turns: 3, every: 3 }), false)
+  assert.equal(voiceCadence({ mode: 'false', turns: 3, every: 3 }), false)
+  assert.equal(voiceCadence({ mode: 'always', turns: 1, every: 3 }), true)
+  assert.equal(voiceCadence({ mode: 'auto', turns: 2, every: 3 }), false)
+  assert.equal(voiceCadence({ mode: 'auto', turns: 3, every: 3 }), true)
+  assert.equal(voiceCadence({ mode: 'auto', turns: 6 }), true) // 默认 every = 3
+  assert.equal(voiceCadence({ mode: 'auto', turns: 0 }), false)
+})
+
+test('开语音也不耽误发文字：语音只是加在文字后面的一层', async () => {
+  const msg = (id, text) => ({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: id,
+    raw_message: text,
+    message: [{ type: 'text', data: { text } }],
+  })
+  const { channel, client } = makeChannel({ config: { voiceOut: 'always' } })
+  channel.start()
+  await channel.handleEvent(msg(31, '在吗'))
+  const texts = client.calls.filter((c) => c.action === 'send_private_msg')
+  assert.equal(texts.length, 1, '文字必须发出去')
+  assert.equal(texts[0].params.message[0].type, 'text')
+  assert.match(texts[0].params.message[0].data.text, /记住了/)
+  channel.stop()
+})
+
+test('想说语音、可是 TTS 不在的时候：文字照发，只记一条 tts-skip', async () => {
+  const msg = (id, text) => ({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: id,
+    raw_message: text,
+    message: [{ type: 'text', data: { text } }],
+  })
+  const logs = []
+  const clients = new FakeClient()
+  const channel = new QqChannel({
+    client: clients,
+    agents: fakeAgents(),
+    config: { ...QqChannel.defaults(), enabled: true, allowPrivate: ['10001'], voiceOut: 'always', ttsUrl: '' },
+    logger: console,
+    onLog: (entry) => logs.push(entry),
+  })
+  channelRef = channel
+  channel.start()
+  await channel.handleEvent(msg(32, '在吗'))
+  assert.equal(clients.calls.filter((c) => c.action === 'send_private_msg').length, 1, '文字照发')
+  assert.ok(logs.some((e) => e.kind === 'tts-skip'), '要记一条为什么没语音')
+  channel.stop()
+})
+
+test('语音节奏跟着会话走：重启之后不会又从第一条开始数', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seed-qqcadence-'))
+  const historyFile = join(dir, 'qq-history.json')
+  const message = (id, text) => ({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: id,
+    raw_message: text,
+    message: [{ type: 'text', data: { text } }],
+  })
+  try {
+    // 先聊两轮，攒下两条历史
+    const first = makeChannel({ config: { historyFile, voiceEvery: 3 } })
+    first.channel.start()
+    await first.channel.handleEvent(message(41, '在吗'))
+    await first.channel.handleEvent(message(42, '今天好累'))
+    first.channel.stop()
+
+    // 重新起一个通道（等于重启 / 改设置后重建），第三轮就该轮到语音
+    const logs = []
+    const second = makeChannel({
+      config: { historyFile, voiceEvery: 3, ttsUrl: '' },
+      onLog: (entry) => logs.push(entry),
+    })
+    second.channel.start()
+    await second.channel.handleEvent(message(43, '在吗'))
+    assert.equal(
+      second.client.calls.filter((c) => c.action === 'send_private_msg').length,
+      1,
+      '文字照发'
+    )
+    assert.ok(
+      logs.some((e) => e.kind === 'tts-skip'),
+      '第三轮应该是语音那一轮（TTS 不在时记一条 tts-skip）'
+    )
+    second.channel.stop()
+
+    // 对照：全新会话第一条，不该轮语音
+    const freshLogs = []
+    const fresh = makeChannel({ config: { voiceEvery: 3, ttsUrl: '' }, onLog: (entry) => freshLogs.push(entry) })
+    fresh.channel.start()
+    await fresh.channel.handleEvent(message(44, '在吗'))
+    assert.ok(!freshLogs.some((e) => e.kind === 'tts-skip'), '第一条不该轮到语音')
+    fresh.channel.stop()
+  } finally {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
+    } catch {}
+  }
+})
+
+test('想听一条语音的时候，不用等「每隔三条」', async () => {
+  assert.equal(wantsVoice('给我们发一条语音吧'), true)
+  assert.equal(wantsVoice('说句话听听'), true)
+  assert.equal(wantsVoice('唱一个呗'), true)
+  assert.equal(wantsVoice('语音识别又坏了'), false)
+  assert.equal(wantsVoice('这个插件带语音功能吗'), false)
+  assert.equal(wantsVoice(''), false)
+
+  const msg = (id, text) => ({
+    post_type: 'message',
+    message_type: 'private',
+    self_id: 10000,
+    user_id: 10001,
+    message_id: id,
+    raw_message: text,
+    message: [{ type: 'text', data: { text } }],
+  })
+  const logs = []
+  const first = makeChannel({ config: { voiceEvery: 3, ttsUrl: '' }, onLog: (entry) => logs.push(entry) })
+  first.channel.start()
+  await first.channel.handleEvent(msg(51, '发一条语音吧'))
+  assert.equal(first.client.calls.filter((c) => c.action === 'send_private_msg').length, 1, '文字照发')
+  assert.ok(logs.some((e) => e.kind === 'tts-skip'), '第一轮就该轮到语音（不是等第三轮）')
+  first.channel.stop()
+
+  const plainLogs = []
+  const plain = makeChannel({ config: { voiceEvery: 3, ttsUrl: '' }, onLog: (entry) => plainLogs.push(entry) })
+  plain.channel.start()
+  await plain.channel.handleEvent(msg(52, '在吗'))
+  assert.ok(!plainLogs.some((e) => e.kind === 'tts-skip'), '没提语音时，第一轮还是不打语音')
+  plain.channel.stop()
+})
+
 test('重启之后还记得刚才聊到哪：qq-history 接上话', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'seed-qqrestart-'))
   const historyFile = join(dir, 'qq-history.json')

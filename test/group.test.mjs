@@ -74,6 +74,22 @@ test('@我 不受时段和冷却限制', () => {
   assert.equal(plan.reply, true)
 })
 
+test('只在话里点了我的名，也不该被「刚说过」和安静时段挡住', () => {
+  // 他 18:41 在群里写「阿鱼，给我们发一条语音吧」，被我自己的 120 秒冷却吃掉
+  const hit = decideGroupReply({ text: '阿鱼，给我们发一条语音吧', mood: low, now: NOON, lastSpokeAt: NOON - 85_000, random: always })
+  assert.equal(hit.reply, true)
+  assert.equal(hit.reason, '提到我')
+
+  const night = new Date(2026, 10, 13, 2, 0, 0).getTime()
+  const atNight = decideGroupReply({ text: '阿鱼你睡了吗', now: night, random: always })
+  assert.equal(atNight.reply, true, '夜里被点名也该应一声')
+
+  // 但连着刷屏还是要有个下限
+  const spam = decideGroupReply({ text: '阿鱼阿鱼', now: NOON, lastSpokeAt: NOON - 2000, random: always })
+  assert.equal(spam.reply, false)
+  assert.match(spam.reason, /缓一缓/)
+})
+
 test('群聊关闭后什么都不回', () => {
   const plan = decideGroupReply({ text: '阿鱼', mentioned: true, config: { groupPolicy: 'off' }, random: always })
   assert.equal(plan.reply, false)
