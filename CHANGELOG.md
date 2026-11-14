@@ -1,3 +1,9 @@
+## 1.4.4 — 2026-11-14
+
+- **包里不再带 python 的 `__pycache__`**：`asr/` 整个目录会进包，之前跑过一次语音识别之后
+  `asr/__pycache__/*.pyc` 就跟着发出去了。现在调用 asr 时加了 `PYTHONDONTWRITEBYTECODE=1`，
+  不会再生成；打包测试也加了一条「`asr` 里不许有 `__pycache__` / `.pyc`」，下次混进去会直接失败。
+
 ## 1.4.3 — 2026-11-14
 
 - **旧会话记录坏掉时，换个新 id 也要把话接上**：会话当初挂的插件后来被禁用时（`resume failed … never started`），

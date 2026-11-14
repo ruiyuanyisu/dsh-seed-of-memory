@@ -459,6 +459,25 @@ test('打包清单带上 asr 脚本（默认路径就指向包里的 asr/asr_onc
   assert.ok(pkg.files.includes('asr'), 'files 里要带 asr')
   assert.ok(existsSync(new URL('asr/asr_once.py', root)), 'asr/asr_once.py 要真的在')
 })
+
+test('打包别把 python 的 __pycache__ 带出去', async () => {
+  // asr 整个目录进包；里面要是留着 __pycache__/*.pyc，别人装完会看到一堆本机字节码
+  const root = decodeURIComponent(new URL('../', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1')
+  const bad = []
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name === '__pycache__') bad.push(full)
+        else walk(full)
+        continue
+      }
+      if (/\.pyc$/i.test(entry.name)) bad.push(full)
+    }
+  }
+  walk(join(root, 'asr'))
+  assert.deepEqual(bad, [], 'asr 里不该有 __pycache__ / .pyc：' + bad.join(', '))
+})
 test('保存 QQ 设置：连接参数没变就不重连，变了才重连', async () => {
   const env = makeEnv()
   apply(env.ctx, {
