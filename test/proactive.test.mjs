@@ -99,7 +99,7 @@ test('情绪很沉的时候更克制：刚找过的那点间隔也拉长一半',
   assert.match(heavy.reason, /刚找过/)
 })
 
-test('心里还堵着的时候，不是撒气，是想问一句', () => {
+test('心里欠着的时候，不是撒气，是想问一句', () => {
   const plan = planProactive({
     now: NOON,
     mood: { valence: 0.1, arousal: 0.3 },
@@ -142,25 +142,25 @@ test('文案带一点具体的事，且四种都不一样', () => {
 })
 
 test('长记忆不硬切在句子中间，也不出现「…。。」', () => {
-  const memory = 'E:\\Carys 盘是 exFAT（THUNDEROBOT USB 确认），所以他一直想换一块更稳的盘，但暂时不想折腾。'
+  const memory = 'D:\\work 盘是 exFAT（THUNDEROBOT USB 确认），所以他一直想换一块更稳的盘，但暂时不想折腾。'
   const text = proactiveText('miss', { memory })
   assert.ok(text.includes('…'))
   assert.doesNotMatch(text, /…。/)
 })
 
-test('主人 QQ 优先，没填才用自定义对象', () => {  assert.equal(ownerTarget({ ownerQQ: '2285450525' }), 'private:2285450525')
-  assert.equal(ownerTarget({ ownerQQ: ' 2285450525 ', target: 'group:123456' }), 'private:2285450525')
+test('主人 QQ 优先，没填才用自定义对象', () => {  assert.equal(ownerTarget({ ownerQQ: '100000001' }), 'private:100000001')
+  assert.equal(ownerTarget({ ownerQQ: ' 100000001 ', target: 'group:123456' }), 'private:100000001')
   assert.equal(ownerTarget({ ownerQQ: '', target: 'private:10001' }), 'private:10001')
   assert.equal(ownerTarget({ ownerQQ: 'abc', target: '' }), '')
   assert.equal(ownerTarget({}), '')
 })
 
 test('QQ 号里的空格、横线会被滤掉，太短或太长当没填', () => {
-  assert.equal(normalizeOwnerQQ(' 228 5450 525 '), '2285450525')
-  assert.equal(normalizeOwnerQQ('228-5450-525'), '2285450525')
+  assert.equal(normalizeOwnerQQ(' 100 0000 01 '), '100000001')
+  assert.equal(normalizeOwnerQQ('100-0000-01'), '100000001')
   assert.equal(normalizeOwnerQQ('1234'), '')
   assert.equal(normalizeOwnerQQ('1234567890123'), '')
-  assert.equal(normalizeOwnerQQ('qq2285450525'), '2285450525')
+  assert.equal(normalizeOwnerQQ('qq100000001'), '100000001')
   assert.equal(normalizeOwnerQQ(null), '')
 })
 

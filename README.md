@@ -50,7 +50,8 @@ pnpm add dsh-seed-of-memory
 ```
 [Seed of Memory · 根] …
 [Seed of Memory] 记得：…
-[心情] 此刻：…
+[情绪] 平稳（积极性 58）
+[情感] 对你：信任 0.50、亲近 0.44
 [人格] 性格：…
 [说话] …
 ```
@@ -79,8 +80,11 @@ pnpm add dsh-seed-of-memory
 ├── anchors.md       # 根：名字与善良（工具不能改，纯文本，可直接改）
 ├── self.md          # 我是谁（我自己写，可以慢慢长）
 ├── us.md            # 我们之间（纯文本，可直接改）
+├── qq.json          # 可选：QQ 配置（路由、白名单、语音）
+├── qq-history.json  # 可选：QQ 每个会话最近几轮 + 换过的会话 id（删了只丢「重启接话」）
 ├── sources.json     # 可选：外部档案目录（见下）
-└── export-*/        # /seed export 导出的快照
+├── seed.db-backup-YYYY-MM-DD   # 每天一份的库快照（只留最近 3 份）
+└── seed-export-<时间>.jsonl    # /seed export 导出的快照
 ```
 
 全部在本地，不联网、不上传。`seed.db` **没有加密**，里面会有你的私人记录——分享或备份前请自己判断。
@@ -191,9 +195,9 @@ pnpm add dsh-seed-of-memory
 
 ## 工具与命令
 
-工具（14 个）：
+工具（16 个）：
 `seed_remember` `seed_search` `seed_open` `seed_inspect` `seed_forget` `seed_consolidate` \
-`seed_anchor` `seed_believe` `seed_feel` `seed_qing` `seed_trait` `seed_aspire` `seed_habit` `seed_compat`
+`seed_anchor` `seed_believe` `seed_feel` `seed_qing` `seed_trait` `seed_aspire` `seed_habit` `seed_compat` `seed_contact` `seed_loose`
 
 `seed_inspect` 是只读入口：`what` = `self`（根 + 我是谁 + 我们之间）/ `persona`（理想与特质）/ `style`（说话习惯）/ `mood`（此刻心情）/ `affect`（对你的情感）/ `why`（某条记忆或认知的来历，传 `id`）。
 
@@ -203,8 +207,15 @@ pnpm add dsh-seed-of-memory
 
 `seed_consolidate` 整理分层：证据够的短期升长期、过期的退场，默认只预览，`apply` 才真执行。
 
-命令：`/seed status | search | remember | why | self | anchor | grow | mood | feel` \
-`| believe | persona | aspire | trait | habit | style | consolidate | backup | sources [rescan] | bili | proactive | export`
+`seed_contact` 是熟人卡：`set` 写称呼、关系、生日、喜欢什么、要留神什么（`peer` 写成 `private:…` 或 `group:…`），`get` / `list` / `forget` 对应看和删。它不是记忆，不进四层、不打分。
+
+`seed_loose` 是未完话头：`add` 记下我问过、还没落定的那一句；他回话后自动标成 answered，再由我判断 `done` / `cancel` / `update` 收掉。
+
+`seed_contact` 是熟人卡：`set` 写称呼、关系、生日、喜欢什么、要留神什么（`peer` 写成 `private:…` 或 `group:…`），`get` / `list` / `forget` 对应看和删。它不是记忆，不进四层、不打分。
+
+`seed_loose` 是未完话头：`add` 记下我问过、还没落定的那一句；他回话后自动标成 answered，再由我判断 `done` / `cancel` / `update` 收掉。
+
+命令：`/seed status | search <词> | open <id> | remember <内容> | why <id> | forget <id> | self | anchor <一句话> | grow <一句话> | mood | feel <原因> | believe <一句话> | persona | aspire <一句话> | trait <名字> | habit <说话习惯> | style | bili [天数] [--dry] | sources [rescan] | backup | export | pending | keep <id> | consolidate [apply] | proactive [say] | contact [set|forget] | loose [done|cancel|update] <id>`
 
 ## 设计原则
 
@@ -231,10 +242,6 @@ node --test test/*.test.mjs          # 需要带 node:sqlite 的 Node 22.19+
 ```
 
 测试覆盖：存储/取代/挂起、身份根、情绪评分、档案索引、人格生长、说话习惯、插件注册。
-
-## License
-
-MIT
 
 ### QQ 通道的模型
 
@@ -304,7 +311,7 @@ qq.json 里可以显式指定 provider / model / reasoningEffort；不填会跟�
 | 这条消息 | 接不接 |
 | --- | --- |
 | @我 / 回复我 | 一定接（不受时段与冷却限制） |
-| 提到「阿鱼」「Carys」 | 85% 接 |
+| 提到「小忆」「Seed」 | 85% 接 |
 | 聊到我感兴趣的东西（记忆、插件、AI、语音、游戏、B站…） | 按心情折算，约 40%–60% |
 | 什么都没沾 | 心情很旺时 5% 左右随口接一句；心情低落直接潜水 |
 | 夜里 00:00–07:00 | 非 @ 的消息不接 |
@@ -345,3 +352,7 @@ qq.json 里可以显式指定 provider / model / reasoningEffort；不填会跟�
 ### 面板里的「说明」页
 
 完整的说明书在 `docs/GUIDE.md`，面板最后一页「说明」直接读它（`GET /dsh-seed-of-memory/guide`）：安装与升级、离线资源、每一页做什么、工具、配置、QQ 设置、常见问题。
+
+## License
+
+MIT

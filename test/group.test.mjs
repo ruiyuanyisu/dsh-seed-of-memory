@@ -5,6 +5,7 @@ import {
   decideGroupReply,
   bumpGroupStats,
   aboutMe,
+  interestHits,
   interestScore,
   socialEnergy,
   GROUP_DEFAULTS,
@@ -29,10 +30,10 @@ test('回复我的消息也算点我', () => {
 })
 
 test('提到我的名字大概率回（随机命中时）', () => {
-  const hit = decideGroupReply({ text: '阿鱼今天怎么没说话', mood: low, now: NOON, random: always })
+  const hit = decideGroupReply({ text: '小忆今天怎么没说话', mood: low, now: NOON, random: always })
   assert.equal(hit.reply, true)
   assert.equal(hit.reason, '提到我')
-  const miss = decideGroupReply({ text: '阿鱼今天怎么没说话', mood: low, now: NOON, random: never })
+  const miss = decideGroupReply({ text: '小忆今天怎么没说话', mood: low, now: NOON, random: never })
   assert.equal(miss.reply, false)
 })
 
@@ -70,34 +71,34 @@ test('安静时段、间隔、每小时上限都挡住', () => {
 
 test('@我 不受时段和冷却限制', () => {
   const night = new Date(2026, 10, 13, 2, 0, 0).getTime()
-  const plan = decideGroupReply({ text: '阿鱼', mentioned: true, now: night, lastSpokeAt: night - 1000, random: never })
+  const plan = decideGroupReply({ text: '小忆', mentioned: true, now: night, lastSpokeAt: night - 1000, random: never })
   assert.equal(plan.reply, true)
 })
 
 test('只在话里点了我的名，也不该被「刚说过」和安静时段挡住', () => {
-  // 他 18:41 在群里写「阿鱼，给我们发一条语音吧」，被我自己的 120 秒冷却吃掉
-  const hit = decideGroupReply({ text: '阿鱼，给我们发一条语音吧', mood: low, now: NOON, lastSpokeAt: NOON - 85_000, random: always })
+  // 他 18:41 在群里写「小忆，给我们发一条语音吧」，被我自己的 120 秒冷却吃掉
+  const hit = decideGroupReply({ text: '小忆，给我们发一条语音吧', mood: low, now: NOON, lastSpokeAt: NOON - 85_000, random: always })
   assert.equal(hit.reply, true)
   assert.equal(hit.reason, '提到我')
 
   const night = new Date(2026, 10, 13, 2, 0, 0).getTime()
-  const atNight = decideGroupReply({ text: '阿鱼你睡了吗', now: night, random: always })
+  const atNight = decideGroupReply({ text: '小忆你睡了吗', now: night, random: always })
   assert.equal(atNight.reply, true, '夜里被点名也该应一声')
 
   // 但连着刷屏还是要有个下限
-  const spam = decideGroupReply({ text: '阿鱼阿鱼', now: NOON, lastSpokeAt: NOON - 2000, random: always })
+  const spam = decideGroupReply({ text: '小忆小忆', now: NOON, lastSpokeAt: NOON - 2000, random: always })
   assert.equal(spam.reply, false)
   assert.match(spam.reason, /缓一缓/)
 })
 
 test('群聊关闭后什么都不回', () => {
-  const plan = decideGroupReply({ text: '阿鱼', mentioned: true, config: { groupPolicy: 'off' }, random: always })
+  const plan = decideGroupReply({ text: '小忆', mentioned: true, config: { groupPolicy: 'off' }, random: always })
   assert.equal(plan.reply, false)
 })
 
 test('aboutMe 中英文名字都能认，短词不误伤', () => {
-  assert.equal(aboutMe('Carys 在吗'), true)
-  assert.equal(aboutMe('阿鱼呢'), true)
+  assert.equal(aboutMe('Seed 在吗'), true)
+  assert.equal(aboutMe('小忆呢'), true)
   assert.equal(aboutMe('今天天气不错'), false)
   assert.equal(aboutMe('a'), false)
 })
@@ -139,4 +140,27 @@ test('QqChannel 默认配置与状态带群聊判断和实时心情', () => {
   assert.equal(status.groupMood.valence, 0.4)
   assert.ok(Array.isArray(status.groupTopics))
   assert.ok(Array.isArray(status.groupStats))
+})
+
+test('额度用完了，点我的名照样得应一声', () => {
+  const cfg = { groupMaxPerDay: 10, groupMaxPerHour: 3, groupMinGapSec: 120 }
+  const busy = { config: cfg, now: Date.now(), lastSpokeAt: 0, dayCount: 10, hourCount: 3 }
+  const named = decideGroupReply({ ...busy, text: '小忆你说呢', random: () => 0.1 })
+  assert.equal(named.reply, true, '被点名就该回，哪怕今天已经说够了')
+  assert.equal(named.reason, '提到我')
+  const plain = decideGroupReply({ ...busy, text: '今天天气不错', random: () => 0.1 })
+  assert.equal(plain.reply, false, '没点名就老老实实待着')
+  // 两倍硬上限之后才真的闭嘴
+  const over = decideGroupReply({ ...busy, dayCount: 25, text: '小忆你说呢', random: () => 0.1 })
+  assert.equal(over.reply, false)
+  assert.equal(over.reason, '今天在群里说够了')
+})
+
+test('英文兴趣词按词边界算，别把 said / email 当成在聊 AI', () => {
+  assert.equal(interestHits('今天研究 AI 模型'), 2, 'AI 和 模型 各一个')
+  assert.equal(interestHits('he said hello'), 0, 'said 里没有 AI')
+  assert.equal(interestHits('send me an email'), 0, 'email 里也没有')
+  assert.equal(interestHits('我用 DSH 写代码'), 2)
+  assert.equal(interestHits('B站上的音乐'), 2, '中文词照旧按包含算')
+  assert.equal(interestScore('he said hello'), 0)
 })

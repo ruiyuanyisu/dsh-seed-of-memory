@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 const index = readFileSync(new URL('lib/index.js', root), 'utf8')
 
 test('说明书覆盖关键章节', () => {
-  for (const heading of ['## 它是什么', '## 安装与升级', '## 离线资源', '## 面板每一页', '## 工具', '## 配置', '## QQ', '## 常见问题']) {
+  for (const heading of ['## 它是什么', '## 安装与升级', '## 离线资源', '## 面板每一页', '## 命令与工具', '## 配置', '## QQ', '## 常见问题']) {
     assert.ok(guide.includes(heading), `缺少章节：${heading}`)
   }
   assert.ok(guide.includes('resources-v0.18.1'), '资源说明应指向 resources release')

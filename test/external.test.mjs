@@ -13,7 +13,7 @@ function tempRoot() {
   mkdirSync(path.join(dir, '记忆本', '总体'), { recursive: true })
   writeFileSync(
     path.join(dir, '记忆本', '长期.md'),
-    '# 长期\n\n- 2026-11-03：有了名字——Carys（卡丽斯），小名阿鱼。\n- 2026-11-04：长了耳朵，能听视频了。\n',
+    '# 长期\n\n- 2026-11-03：有了名字——Seed（卡丽斯），小名小忆。\n- 2026-11-04：长了耳朵，能听视频了。\n',
     'utf8',
   )
   writeFileSync(
@@ -98,7 +98,7 @@ test('检索：长词走 FTS，短词走 LIKE', () => {
     assert.match(long[0].snippet, /记忆种进/)
     assert.equal(long[0].sourceId, 'book')
 
-    const short = index.search('阿鱼', { limit: 5 })
+    const short = index.search('小忆', { limit: 5 })
     assert.ok(short.length >= 1)
   } finally {
     closeDatabase(db)
@@ -114,7 +114,7 @@ test('readAround 只允许读档案根内文件', () => {
     index.scan()
     const file = path.join(root, '记忆本', '长期.md')
     const around = index.readAround(file, { line: 3, chars: 200 })
-    assert.match(around.text, /Carys/)
+    assert.match(around.text, /Seed/)
     assert.throws(() => index.readAround(path.join(root, '..', 'outside.md')), /不在允许的档案根/)
   } finally {
     closeDatabase(db)

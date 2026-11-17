@@ -10,3 +10,7 @@ dist/
 .idea/
 .vscode/
 __pycache__/
+.tmp/
+
+# 本地探针脚本，不进仓库
+_probe*.mjs

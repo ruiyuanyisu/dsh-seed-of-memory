@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { QqChannel, splitBubbles, voiceFallback, voiceCadence, samePath } from '../lib/qq/channel.js'
+import { QqChannel, splitBubbles, splitOutsideQuotes, trimTailBubbles, voiceFallback, voiceCadence, samePath } from '../lib/qq/channel.js'
 import { QqHistory } from '../lib/qq/history.js'
 import { ownerTarget } from '../lib/qq/proactive.js'
 import { segmentsOf, textOf, mentionedSelf, fallbackUserMessage, wantsVoice } from '../lib/qq/message.js'
@@ -89,6 +89,8 @@ function makeChannel({ config = {}, agents, client = new FakeClient(), onLog, at
     enabled: true,
     allowPrivate: ['10001'],
     allowGroups: ['123456'],
+    // 测试里不等静默；专门测防抖的用例自己传 debounceMs
+    debounceMs: 0,
     ...config,
   }
   const channel = new QqChannel({ client, agents: agents ?? fakeAgents(), config: merged, logger: console, onLog, attachWorkspace, history })
@@ -366,13 +368,13 @@ test('ownerQQ 解析出的地址能真的走 say 发到私聊', async () => {
     config: { ...QqChannel.defaults(), enabled: true, burst: false, voiceOut: 'off' },
     logger: { warn() {}, error() {}, log() {} },
   })
-  const target = ownerTarget({ ownerQQ: '2285450525' })
-  assert.equal(target, 'private:2285450525')
+  const target = ownerTarget({ ownerQQ: '100000001' })
+  assert.equal(target, 'private:100000001')
   const ok = await channel.say(target, '测试一句')
   assert.equal(ok, true)
   assert.equal(client.calls.length, 1)
   assert.equal(client.calls[0].action, 'send_private_msg')
-  assert.equal(client.calls[0].params.user_id, 2285450525)
+  assert.equal(client.calls[0].params.user_id, 100000001)
   assert.equal(client.calls[0].params.message[0].data.text, '测试一句')
 })
 
@@ -435,7 +437,7 @@ test('想说语音、可是 TTS 不在的时候：文字照发，只记一条 tt
   const channel = new QqChannel({
     client: clients,
     agents: fakeAgents(),
-    config: { ...QqChannel.defaults(), enabled: true, allowPrivate: ['10001'], voiceOut: 'always', ttsUrl: '' },
+    config: { ...QqChannel.defaults(), enabled: true, allowPrivate: ['10001'], voiceOut: 'always', ttsUrl: '', debounceMs: 0 },
     logger: console,
     onLog: (entry) => logs.push(entry),
   })
@@ -645,9 +647,9 @@ test('会话建好就顺手挂进工作区，cwd 对不上就不挂', async () =
 })
 
 test('samePath：大小写、斜杠、尾部分隔符都不计较', () => {
-  assert.equal(samePath('E:\\Carys', 'e:/carys/'), true)
-  assert.equal(samePath('E:\\Carys', 'E:\\cz'), false)
-  assert.equal(samePath('', 'E:\\Carys'), false)
+  assert.equal(samePath('D:\\work', 'd:/work/'), true)
+  assert.equal(samePath('D:\\work', 'E:\\cz'), false)
+  assert.equal(samePath('', 'D:\\work'), false)
   assert.equal(samePath(undefined, undefined), false)
 })
 
@@ -698,7 +700,7 @@ test('配置里的 cwd 变了，旧会话会换成新会话，并记住换过的
   const { channel } = makeChannel({
     agents,
     history,
-    config: { cwd: 'E:\\Carys', replyTimeoutMs: 30, silentFallback: false },
+    config: { cwd: 'D:\\work', replyTimeoutMs: 30, silentFallback: false },
     attachWorkspace: async (sessionId, cwd) => {
       attached.push({ sessionId, cwd })
     },
@@ -709,8 +711,8 @@ test('配置里的 cwd 变了，旧会话会换成新会话，并记住换过的
 
   assert.equal(created.length, 1, '旧会话的 cwd 不对，应该重开一份')
   assert.match(created[0].sessionId, /-r[a-z0-9]+$/)
-  assert.equal(created[0].cwd, 'E:\\Carys')
-  assert.equal(attached.at(-1)?.cwd, 'E:\\Carys')
+  assert.equal(created[0].cwd, 'D:\\work')
+  assert.equal(attached.at(-1)?.cwd, 'D:\\work')
   const mapped = history.sessionOf('private:10001')
   assert.equal(mapped, created[0].sessionId)
   history.dispose()
@@ -753,7 +755,7 @@ test('换过 id 之后重启，还接着用记下来的那个会话', async () =
     },
   }
   const history1 = new QqHistory(file)
-  const one = makeChannel({ agents: agents1, history: history1, config: { cwd: 'E:\\Carys', replyTimeoutMs: 30, silentFallback: false } })
+  const one = makeChannel({ agents: agents1, history: history1, config: { cwd: 'D:\\work', replyTimeoutMs: 30, silentFallback: false } })
   one.channel.start()
   await one.channel.handleEvent(privateEvent(71, '在吗'))
   one.channel.stop()
@@ -776,7 +778,7 @@ test('换过 id 之后重启，还接着用记下来的那个会话', async () =
       second.push(sessionId)
       return {
         agent: {
-          header: { cwd: 'E:\\Carys' },
+          header: { cwd: 'D:\\work' },
           followup() {
             setTimeout(() => {
               channelRef?.onSessionEvent(
@@ -792,7 +794,7 @@ test('换过 id 之后重启，还接着用记下来的那个会话', async () =
     },
   }
   const history2 = new QqHistory(file)
-  const two = makeChannel({ agents: agents2, history: history2, config: { cwd: 'E:\\Carys', replyTimeoutMs: 30, silentFallback: false } })
+  const two = makeChannel({ agents: agents2, history: history2, config: { cwd: 'D:\\work', replyTimeoutMs: 30, silentFallback: false } })
   two.channel.start()
   await two.channel.handleEvent(privateEvent(72, '又来了'))
   two.channel.stop()
@@ -817,7 +819,7 @@ test('/reset 之后下一句是真正的新会话，不是把旧的恢复回来'
       let reply = '嗯。'
       return {
         agent: {
-          header: { cwd: 'E:\\Carys' },
+          header: { cwd: 'D:\\work' },
           followup() {
             setTimeout(() => {
               channelRef?.onSessionEvent(
@@ -832,7 +834,7 @@ test('/reset 之后下一句是真正的新会话，不是把旧的恢复回来'
       }
     },
   }
-  const { channel } = makeChannel({ agents, config: { cwd: 'E:\\Carys', replyTimeoutMs: 40 } })
+  const { channel } = makeChannel({ agents, config: { cwd: 'D:\\work', replyTimeoutMs: 40 } })
   channel.start()
   await channel.handleEvent(privateEvent(81, '在吗'))
   assert.equal(created.length, 1)
@@ -861,7 +863,7 @@ test('连着两条消息同时到，也只建一份会话', async () => {
       await new Promise((resolve) => setTimeout(resolve, 10))
       return {
         agent: {
-          header: { cwd: 'E:\\Carys' },
+          header: { cwd: 'D:\\work' },
           followup() {
             setTimeout(() => {
               channelRef?.onSessionEvent(
@@ -876,7 +878,7 @@ test('连着两条消息同时到，也只建一份会话', async () => {
       }
     },
   }
-  const { channel } = makeChannel({ agents, config: { cwd: 'E:\\Carys', replyTimeoutMs: 20, silentFallback: false } })
+  const { channel } = makeChannel({ agents, config: { cwd: 'D:\\work', replyTimeoutMs: 20, silentFallback: false } })
   channel.start()
   // 不 await，模拟「两条消息同一拍进来」（start 里也是 .catch 而不 await）
   const first = channel.handleEvent(privateEvent(91, '在吗'))
@@ -886,4 +888,196 @@ test('连着两条消息同时到，也只建一份会话', async () => {
   channel.stop()
   assert.equal(creates, 1, '两条消息不该各建一份会话')
   assert.equal(recordCount, 1)
+})
+
+
+
+test('人说的话里带 RemoteError 这种词，别当成宿主报错吞掉', async () => {
+  const { channel, client } = makeChannel({ agents: fakeAgents({ reply: '在的。' }) })
+  await channel.start()
+  const human = ['RemoteError 是什么梗', 'session persistence 这词怎么翻', '我上次 resume failed 了', 'never started 这个词组好怪']
+  for (const [index, text] of human.entries()) {
+    await channel.handleEvent(privateEvent(200 + index, text))
+  }
+  const sent = client.calls.filter((call) => call.action === 'send_private_msg')
+  assert.equal(sent.length, human.length, '每一句人话都该回')
+  assert.ok(!channel.entries.some((entry) => entry.kind === 'skip' && /内部报错/.test(entry.text)), '不该有人话被当成内部报错跳过')
+})
+
+test('真正的宿主报错仍然拦下来：不当消息回、也不发出去', async () => {
+  const { channel, client } = makeChannel({ agents: fakeAgents({ reply: 'RemoteError: resume failed for session "x": never started' }) })
+  await channel.start()
+  await channel.handleEvent(privateEvent(300, 'RemoteError: resume failed for session "x": never started'))
+  await channel.handleEvent(privateEvent(301, '在吗'))
+  const sent = client.calls.filter((call) => call.action === 'send_private_msg')
+  assert.equal(sent.length, 1, '报错那条不该回，正常那条要回')
+  assert.ok(!JSON.stringify(sent).includes('RemoteError'), '回复里不能带报错原文')
+  assert.ok(channel.entries.some((entry) => entry.kind === 'skip' && /内部报错/.test(entry.text)))
+})
+
+test('坏会话名单会写进账本，重启后不用再撞一次', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seedqq-broken-'))
+  const file = join(dir, 'qq-history.json')
+  const failing = {
+    get() { return null },
+    async resume() { throw new Error('no session') },
+    async create({ sessionId }) {
+      if (!sessionId.includes('-r')) throw new Error('resume failed for session "old": never started')
+      return { agent: { header: { cwd: 'D:\\work' }, followup() { setTimeout(() => { channelRef?.onSessionEvent({ header: { id: sessionId } }, { type: 'turn/end', data: {} }) }, 5) }, async whenIdle() {} }, dispose() {} }
+    },
+  }
+  const first = makeChannel({ agents: failing, history: new QqHistory(file) })
+  first.channel.history.load()
+  await first.channel.start()
+  await first.channel.handleEvent(privateEvent(400, '在吗'))
+  first.channel.history.flush()
+  const again = new QqHistory(file).load()
+  assert.equal(again.brokenIds().length, 1, '坏 id 要落盘')
+  const second = makeChannel({ agents: failing, history: again })
+  assert.equal(second.channel.brokenSessions.size, 1, '重启之后名单要在')
+  second.channel.stop()
+})
+
+test('挂工作区会等 header 落盘：前两次失败、第三次成功', async () => {
+  const logs = []
+  let attempts = 0
+  const attach = async () => {
+    attempts += 1
+    if (attempts < 3) throw new Error('carries no cwd to validate against')
+    return true
+  }
+  const { channel } = makeChannel({ config: { cwd: 'D:\\work' }, agents: fakeAgents({ reply: '嗯。' }), attachWorkspace: attach, onLog: (entry) => logs.push(entry.kind + ' ' + entry.text) })
+  await channel.start()
+  await channel.handleEvent(privateEvent(500, '在吗'))
+  await new Promise((resolve) => setTimeout(resolve, 1400))
+  assert.ok(attempts >= 3, '应该重试到成功，实际 ' + attempts)
+  assert.ok(logs.some((line) => line.includes('挂进工作区：')), '挂上了要留一行 debug：' + logs.join(' | '))
+  channel.stop()
+})
+
+
+
+test('配了 routes 就按路由接：不在 accept 里的人不回', async () => {
+  const { channel, client } = makeChannel({
+    config: { routes: [{ id: 'main', cwd: 'D:\\work', accept: { private: ['111'], groups: [] } }] },
+    agents: fakeAgents({ reply: '嗯。' }),
+  })
+  await channel.start()
+  await channel.handleEvent({ ...privateEvent('r700', '在吗'), user_id: 999, sender: { user_id: 999 } })
+  assert.equal(client.calls.filter((call) => call.action === 'send_private_msg').length, 0, '不在 accept 里的人不该回')
+  assert.ok(channel.entries.some((entry) => entry.kind === 'deny' && /没有一条路由认它/.test(entry.text)))
+  await channel.handleEvent({ ...privateEvent('r701', '在吗'), user_id: 111, sender: { user_id: 111 } })
+  assert.equal(client.calls.filter((call) => call.action === 'send_private_msg').length, 1, 'accept 里的人要回')
+})
+
+test('路由的 cwd 和记忆档位跟着会话走', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seedqq-routecwd-'))
+  const created = []
+  const agents = {
+    get() { return null },
+    async resume() { throw new Error('no session') },
+    async create({ sessionId, meta }) {
+      created.push({ sessionId, cwd: meta?.cwd })
+      return {
+        agent: {
+          header: { cwd: meta?.cwd },
+          followup() { setTimeout(() => channelRef?.onSessionEvent({ header: { id: sessionId } }, { type: 'turn/end', data: {} }), 5) },
+          async whenIdle() {},
+        },
+        dispose() {},
+      }
+    },
+  }
+  const { channel } = makeChannel({
+    config: { routes: [{ id: 'tsuki', cwd: dir, accept: { private: ['*'], groups: [] }, memoryScope: 'gui' }] },
+    agents,
+  })
+  await channel.start()
+  await channel.handleEvent(privateEvent(800, '在吗'))
+  assert.equal(created.length, 1)
+  assert.equal(created[0].cwd, dir, '会话要落在路由给的 cwd 里')
+  assert.equal(channel.scopeOf(created[0].sessionId), 'gui', '记忆档位跟着路由')
+  channel.stop()
+})
+
+test('引号里的句号不算断句：话说了一半别切断', () => {
+  const parts = splitOutsideQuotes('我说「好。然后呢」就算了。明天再说。')
+  assert.deepEqual(parts.map((p) => p.trim()), ['我说「好。然后呢」就算了。', '明天再说。'])
+  // 括号同理
+  const bracket = splitOutsideQuotes('（这里有个句号。但没说完）继续。')
+  assert.equal(bracket.length, 1, '括号里的句号不该断开')
+  assert.ok(bracket[0].includes('句号。但没说完'))
+  const bubbles = splitBubbles('我说「先别动。等我回来」这件事。然后走了。', 3, 90)
+  assert.ok(bubbles[0].includes('先别动。等我回来'), '引号里那句不该被切到第二条去')
+})
+
+test('收尾只发寒暄时，少发一条', () => {
+  assert.deepEqual(trimTailBubbles(['今天去山里了。', '晚安。']), ['今天去山里了。'])
+  assert.deepEqual(trimTailBubbles(['晚安。']), ['晚安。'], '只有一条时不能丢光')
+  assert.deepEqual(trimTailBubbles(['今天去山里了。', '记得带伞。']), ['今天去山里了。', '记得带伞。'])
+})
+
+test('连着发两条，等静默合成一轮再回', async () => {
+  const agents = fakeAgents()
+  const { channel } = makeChannel({ agents, config: { debounceMs: 15, debounceMaxMs: 200 } })
+  await channel.start()
+  await channel.handleEvent(privateEvent(1, '在吗'))
+  await channel.handleEvent(privateEvent(2, '我有点事想问你'))
+  assert.equal(agents.created.length, 0, '静默还没到，不该先回')
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.equal(agents.created.length, 1, '两条只该合成一轮')
+  const body = agents.created[0].message.content[0].text
+  assert.ok(body.includes('在吗') && body.includes('我有点事想问你'), '两条内容都要在')
+  channel.stop()
+})
+
+test('最后一条只是寒暄，就不单独发出去', async () => {
+  const agents = fakeAgents({ reply: '今天很累。晚安。' })
+  const { channel, client } = makeChannel({ agents, config: { debounceMs: 0 } })
+  await channel.start()
+  await channel.handleEvent(privateEvent(1, '在吗'))
+  const texts = client.calls.map((c) => c.params?.message?.[0]?.data?.text).filter(Boolean)
+  assert.deepEqual(texts, ['今天很累。'], '晚安那条不该发')
+  channel.stop()
+})
+
+test('发送超时只记「结果未知」，不重发', async () => {
+  const agents = fakeAgents()
+  const logs = []
+  const client = new FakeClient()
+  client.call = async (action, params) => {
+    client.calls.push({ action, params })
+    throw new Error('TimeoutError: 20000ms exceeded')
+  }
+  const { channel } = makeChannel({ agents, client, onLog: (line) => logs.push(line), config: { debounceMs: 0 } })
+  await channel.start()
+  await channel.handleEvent(privateEvent(1, '在吗'))
+  const sends = client.calls.filter((c) => c.action === 'send_private_msg')
+  assert.equal(sends.length, 1, '超时了不该自己重发')
+  assert.ok(logs.some((line) => line.kind === 'send-unknown'), '该记成结果未知')
+  channel.stop()
+})
+
+test('每轮递给模型的话里都带着「你在 QQ 上」和语音那一行', async () => {
+  // 记忆卡只在会话开头注入一次，后面几轮模型会以为自己在 GUI 里。
+  // 所以这段提示得跟着每条消息走，不然它就不写 [语音] 那行。
+  const agents = fakeAgents({ reply: '在的。' })
+  const { channel } = makeChannel({ agents, config: { debounceMs: 0 } })
+  await channel.start()
+  await channel.handleEvent(privateEvent(1, '在吗'))
+  const body = agents.created[0].message.content[0].text
+  assert.match(body, /\[这一轮\]/, '要提醒它这是 QQ')
+  assert.match(body, /\[语音\]/, '要提醒它写语音那行')
+  channel.stop()
+})
+
+test('主动消息带语音时，文字照样先发（语音是加一层，不是替代品）', () => {
+  const source = readFileSync(new URL('../lib/qq/channel.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(
+    source,
+    /if \(spoken\) return true/,
+    '语音一发成功就 return，主动消息就只剩声音、没有字了',
+  )
+  assert.match(source, /let spoke = false/, '要先发文字，语音只当补一层')
+  assert.match(source, /spoke = await this\.#sendVoice/)
 })

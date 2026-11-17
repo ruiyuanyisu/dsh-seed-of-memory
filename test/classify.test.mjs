@@ -11,7 +11,7 @@ test('层默认映射正确', () => {
 })
 
 test('kindOf 能分辨身份、偏好、计划、事件、事实', () => {
-  assert.equal(kindOf('我的名字叫阿鱼'), 'identity')
+  assert.equal(kindOf('我的名字叫小忆'), 'identity')
   assert.equal(kindOf('我喜欢夜里听雨'), 'preference')
   assert.equal(kindOf('打算明天把索引做完'), 'plan')
   assert.equal(kindOf('今天她说要早点睡'), 'event')
@@ -33,7 +33,7 @@ test('时间性的话落在短期', () => {
 test('buffer 默认是工作记忆，身份类再抬到长期', () => {
   assert.equal(classifyText('在改索引', { layer: 'buffer' }).tier, 'working')
   assert.equal(classifyText('刚才在改索引', { layer: 'buffer' }).tier, 'short')
-  assert.equal(classifyText('我叫阿鱼', { layer: 'buffer' }).tier, 'long')
+  assert.equal(classifyText('我叫小忆', { layer: 'buffer' }).tier, 'long')
 })
 
 test('新鲜短期记忆不过门槛', () => {

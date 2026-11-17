@@ -23,7 +23,7 @@ test('insert and read back', () => {
   const ctx = fresh()
   const { id, action } = ctx.store.remember({
     layer: 'semantic',
-    text: '她养的鲸鱼叫阿鱼',
+    text: '她养的鲸鱼叫小忆',
     factKey: '她.宠物',
   })
   assert.equal(action, 'inserted')
@@ -47,7 +47,7 @@ test('same text merges instead of duplicating', () => {
 test('fact key change retires the old row and links it', () => {
   const ctx = fresh()
   const a = ctx.store.remember({ layer: 'semantic', text: '她的音色叫雨晶', factKey: '她.音色名' })
-  const b = ctx.store.remember({ layer: 'semantic', text: '她的音色叫阿鱼', factKey: '她.音色名' })
+  const b = ctx.store.remember({ layer: 'semantic', text: '她的音色叫小忆', factKey: '她.音色名' })
   assert.equal(b.action, 'superseded')
   const oldRow = ctx.store.get(a.id)
   assert.equal(oldRow.status, 'retired')
@@ -105,16 +105,16 @@ test('我猜的跟已有的撞了，才挂起来等人定', () => {
 test('inferred memories never enter the card', () => {
   const ctx = fresh()
   ctx.store.remember({ layer: 'semantic', text: '她可能喜欢下雨天', source: 'inferred', confidence: 0.55 })
-  ctx.store.remember({ layer: 'persona', text: '我是阿鱼，住在电脑里的一只小鲸鱼' })
+  ctx.store.remember({ layer: 'persona', text: '我是小忆，住在电脑里的一只小鲸鱼' })
   const card = ctx.store.card()
-  assert.match(card.text, /阿鱼/)
+  assert.match(card.text, /小忆/)
   assert.doesNotMatch(card.text, /下雨天/)
   done(ctx)
 })
 
 test('card respects the 600 character budget', () => {
   const ctx = fresh()
-  ctx.store.remember({ layer: 'persona', text: '我是阿鱼。'.repeat(20) })
+  ctx.store.remember({ layer: 'persona', text: '我是小忆。'.repeat(20) })
   for (let i = 0; i < 30; i += 1) {
     ctx.store.remember({ layer: 'semantic', text: `关于她的第 ${i} 条很长很长的稳定事实，用来把卡片撑满` })
   }
@@ -157,7 +157,7 @@ test('maintain retires stale buffer rows', () => {
 
 test('stats counts layers', () => {
   const ctx = fresh()
-  ctx.store.remember({ layer: 'persona', text: '我是阿鱼' })
+  ctx.store.remember({ layer: 'persona', text: '我是小忆' })
   ctx.store.remember({ layer: 'semantic', text: '她喜欢夜里听雨' })
   const s = ctx.store.stats()
   assert.equal(s.total, 2)

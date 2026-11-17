@@ -8,8 +8,27 @@ import test from 'node:test'
 import { apply } from '../lib/index.js'
 import { SeedStore } from '../lib/store.js'
 
+// 临时 home 改放项目内，且进程退出时兜底删掉。
+// 以前用 os.tmpdir() 又从不清理：一个 home 会带 126MB 的 embedding 运行时，
+// 跑几遍测试 C 盘就被塞满（2026-11-15 清出 331 个、40GB）。
+const TMP_ROOT = join(import.meta.dirname, '..', '.tmp')
+const HOMES = []
+let hooked = false
+function trackHome(home) {
+  HOMES.push(home)
+  if (hooked) return
+  hooked = true
+  process.on('exit', () => {
+    for (const dir of HOMES) {
+      try { rmSync(dir, { recursive: true, force: true, maxRetries: 3 }) } catch {}
+    }
+  })
+}
+
 function makeEnv() {
-  const home = mkdtempSync(join(tmpdir(), 'seed-home-'))
+  mkdirSync(TMP_ROOT, { recursive: true })
+  const home = mkdtempSync(join(TMP_ROOT, 'home-'))
+  trackHome(home)
   process.env.DSH_HOME = home
 
   const tools = []
@@ -99,10 +118,12 @@ test('registers the seed tools with valid schema', () => {
       'seed_believe',
       'seed_compat',
       'seed_consolidate',
+      'seed_contact',
       'seed_feel',
       'seed_forget',
       'seed_habit',
       'seed_inspect',
+      'seed_loose',
       'seed_open',
       'seed_qing',
       'seed_remember',
@@ -198,7 +219,7 @@ test('收件箱里的一句话会进情绪内核（不用模型自己动手）',
 
     const byName = Object.fromEntries(env.tools.map((t) => [t.name, t]))
     const status = await byName.seed_qing.execute({ action: 'status' })
-    assert.match(status.text, /积极性 72/)
+    assert.match(status.text, /此刻 72/)
     assert.match(status.text, /被夸 1/)
 
     // 卡片上也应该跟着说了
@@ -217,7 +238,7 @@ test('情绪内核关了就不记、卡片上也不写', async () => {
 
     const byName = Object.fromEntries(env.tools.map((t) => [t.name, t]))
     const status = await byName.seed_qing.execute({ action: 'status' })
-    assert.match(status.text, /积极性 50/)
+    assert.match(status.text, /此刻 50/)
     assert.match(status.text, /被夸 0/)
     assert.match(status.text, /情绪内核已关/)
     assert.doesNotMatch(env.prompts[0].text(), /\[情绪\]/)
@@ -238,7 +259,7 @@ test('系统消息不进情绪账：goal round 的「可回滚」不算骂', asy
 
     env.emitInbox('Objective: 只做可回滚、有测试覆盖的小改动。', { kind: 'goal', round: 1 })
     const quiet = await byName.seed_qing.execute({ action: 'status' })
-    assert.match(quiet.text, /积极性 50/)
+    assert.match(quiet.text, /此刻 50/)
     assert.match(quiet.text, /被说重话 0/)
 
     // 他真说的话照算，但「回滚」也不算骂
@@ -510,7 +531,7 @@ test('保存 QQ 设置：连接参数没变就不重连，变了才重连', asyn
     const same = await post({ allowPrivate: ['10001', '10002'], autoReply: true })
     const first = JSON.parse(same.body)
     assert.equal(first.ok, true)
-    assert.equal(first.restarted, false, '只改白名单不该断线')
+    assert.equal(first.restarted, true, '改了白名单就该重建通道（通道只在建的时候读配置）')
 
     const moved = await post({ wsUrl: 'ws://127.0.0.1:2' })
     assert.equal(JSON.parse(moved.body).restarted, true, '换地址要重连')
@@ -639,6 +660,98 @@ test('/seed 每条子命令都得给句话，别沉默', async () => {
       assert.equal(typeof out?.text, 'string', `「/seed ${sub.slice(0, 20)}」没给文字：` + JSON.stringify(out)?.slice(0, 120))
       assert.ok(out.text.trim().length > 0, `「/seed ${sub.slice(0, 20)}」给了一句空的`)
     }
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('/seed open 和 /seed forget：打开一条、删掉一条（前缀对上多条时不闷头删）', async () => {
+  const env = makeEnv()
+  try {
+    apply(env.ctx, { budget: 600 })
+    const byName = Object.fromEntries(env.tools.map((t) => [t.name, t]))
+    const wrote = await byName.seed_remember.execute({ text: '他答应周末陪我去看海', layer: 'semantic' })
+    const id = wrote.text.match(/(m_[a-z0-9]+)$/)[1]
+    // 隔几毫秒再写第二条：同一毫秒的 id 前缀会撞上，那是另一条用例在测的
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await byName.seed_remember.execute({ text: '他喜欢夜里听雨', layer: 'semantic' })
+
+    const opened = await env.commands[0].execute(`open ${id}`)
+    assert.match(opened.text, /他答应周末陪我去看海/)
+    assert.match(opened.text, /semantic/)
+
+    const tooShort = await env.commands[0].execute('forget m')
+    assert.match(tooShort.text, /用法：\/seed forget/)
+
+    const removed = await env.commands[0].execute(`forget ${id}`)
+    assert.match(removed.text, /已删除/)
+    const after = await env.commands[0].execute('status')
+    assert.match(after.text, /共 1 条/)
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('熟人卡：工具能写能读，也能删', async () => {
+  const env = makeEnv()
+  try {
+    apply(env.ctx, { budget: 600 })
+    const tool = env.tools.find((t) => t.name === 'seed_contact')
+    assert.ok(tool, '没有 seed_contact 工具')
+
+    const bad = await tool.execute({ action: 'set', peer: '100000001', name: '小忆' })
+    assert.match(bad.text, /peer/)
+
+    const wrote = await tool.execute({
+      action: 'set',
+      peer: 'private:100000001',
+      name: '雁雪',
+      relation: '老朋友',
+      likes: '夜里听雨',
+    })
+    assert.match(wrote.text, /记下了/)
+    assert.match(wrote.text, /雁雪/)
+
+    const got = await tool.execute({ action: 'get', peer: 'private:100000001' })
+    assert.match(got.text, /\[熟人\]/)
+    assert.match(got.text, /夜里听雨/)
+
+    const list = await tool.execute({ action: 'list' })
+    assert.match(list.text, /private:100000001/)
+
+    const gone = await tool.execute({ action: 'forget', peer: 'private:100000001' })
+    assert.match(gone.text, /删了/)
+    const again = await tool.execute({ action: 'get', peer: 'private:100000001' })
+    assert.match(again.text, /还没/)
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('未完话头：记一条、列出来、收掉', async () => {
+  const env = makeEnv()
+  try {
+    apply(env.ctx, { budget: 600 })
+    const tool = env.tools.find((t) => t.name === 'seed_loose')
+    assert.ok(tool, '没有 seed_loose 工具')
+
+    const empty = await tool.execute({ action: 'list' })
+    assert.match(empty.text, /没有/)
+
+    const added = await tool.execute({ action: 'add', peer: 'private:100000001', ask: '周末去山里吗？' })
+    assert.match(added.text, /记下了/)
+
+    // 同一句不堆第二条
+    await tool.execute({ action: 'add', peer: 'private:100000001', ask: '周末去山里吗？' })
+    const list = await tool.execute({ action: 'list' })
+    assert.equal((list.text.match(/周末去山里吗/g) ?? []).length, 1, list.text)
+    const id = (list.text.match(/l_[a-z0-9]+/) ?? [])[0]
+    assert.ok(id, list.text)
+
+    const closed = await tool.execute({ action: 'done', id: id.slice(0, 8), note: '去了' })
+    assert.match(closed.text, /收掉/)
+    const after = await tool.execute({ action: 'list' })
+    assert.match(after.text, /没有/)
   } finally {
     env.cleanup()
   }

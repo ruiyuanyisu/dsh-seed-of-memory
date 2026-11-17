@@ -109,30 +109,42 @@ test('连着夸：第三句多给三成；连着骂：第三句只算六成', ()
 
 test('时间会冲淡：各维度按各自速率回常态', () => {
   const now = Date.now()
-  const state = { mood: 20, hurt: 40, guilt: 10, pressure: 30, updatedAt: now - 600_000 }
-  const out = decayQing(state, now, {
+  const rates = {
     decayPerMin: 0.5,
     hurtDecayPerMin: 0.35,
     guiltDecayPerMin: 0.45,
     pressureDecayPerMin: 1.6,
-  })
-  assert.ok(Math.abs(out.mood - 25) < 1e-6, `mood=${out.mood}`)
-  assert.ok(Math.abs(out.hurt - 36.5) < 1e-6, `hurt=${out.hurt}`)
-  assert.ok(Math.abs(out.guilt - 5.5) < 1e-6, `guilt=${out.guilt}`)
-  assert.ok(Math.abs(out.pressure - 14) < 1e-6, `pressure=${out.pressure}`)
+  }
+  const state = { mood: 20, hurt: 40, guilt: 10, pressure: 30, updatedAt: now - 600_000 }
+  const out = decayQing(state, now, rates)
+  // 十分钟：都朝常态走了一点，但都没到
+  assert.ok(out.mood > 20 && out.mood < 27, `mood=${out.mood}`)
+  assert.ok(out.hurt > 35 && out.hurt < 40, `hurt=${out.hurt}`)
+  assert.ok(out.guilt > 8 && out.guilt < 10, `guilt=${out.guilt}`)
+  assert.ok(out.pressure > 18 && out.pressure < 27, `pressure=${out.pressure}`)
+
+  // 越急的东西落得越快：压力十分钟走掉的最多，委屈最慢
+  const gone = (from, to, anchor) => (from - to) / (from - anchor)
+  assert.ok(gone(30, out.pressure, 0) > gone(40, out.hurt, 0), '压力该比委屈回落得快')
+  assert.ok(gone(20, out.mood, 50) > gone(40, out.hurt, 0), '此刻心情散得比委屈快')
+  // 不是到点归位：一小时后还在半路上，尾巴得拖得住
+  const hourLater = decayQing(state, now + 3_600_000, rates)
+  assert.ok(hourLater.mood > 30 && hourLater.mood < 45, `一小时后 mood=${hourLater.mood}`)
 })
 
 test('一行话：只报状态，不教怎么演', () => {
   const now = Date.now()
-  const happy = qingLine({ mood: 90, hurt: 0, guilt: 0, pressure: 0, updatedAt: now, events: [] }, now)
-  assert.match(happy, /心里松快/)
+  // 关掉昼夜节律：这里验的是词，不是钟点。
+  const flat = { circadian: false }
+  const happy = qingLine({ mood: 90, hurt: 0, guilt: 0, pressure: 0, updatedAt: now, events: [] }, now, flat)
+  assert.match(happy, /心里亮堂堂/)
   assert.match(happy, /积极性 90/)
 
-  const calm = qingLine({ mood: 50, hurt: 0, guilt: 0, pressure: 0, updatedAt: now, events: [] }, now)
+  const calm = qingLine({ mood: 50, hurt: 0, guilt: 0, pressure: 0, updatedAt: now, events: [] }, now, flat)
   assert.match(calm, /平稳/)
 
-  const flat = qingLine({ mood: 15, hurt: 0, guilt: 0, pressure: 0, updatedAt: now, events: [] }, now)
-  assert.match(flat, /话少/)
+  const low = qingLine({ mood: 15, hurt: 0, guilt: 0, pressure: 0, updatedAt: now, events: [] }, now, flat)
+  assert.match(low, /话少/)
 
   const hurt = qingLine({ mood: 40, hurt: 60, guilt: 0, pressure: 0, updatedAt: now, events: [] }, now)
   assert.match(hurt, /委屈还压着 60/)
@@ -321,6 +333,6 @@ test('出事的时候只说心里堵，不乱下「是自己弄坏的」这种�
     assert.ok(snap.guilt > 0, `guilt=${snap.guilt}`)
     const line = qing.line()
     assert.ok(!line.includes('弄坏'), line)
-    assert.match(line, /心里还堵着|委屈|出了事/)
+    assert.match(line, /心里欠着|委屈|出了事/)
   })
 })

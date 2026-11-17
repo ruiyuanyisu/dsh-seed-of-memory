@@ -142,9 +142,51 @@ test('QqChannel：回完一句就进本地账本，重启后的第一个会话�
 
   // 账本里的「刚才」只补进新会话的第一条消息，并且只补一次
   assert.match(sent[0].text, /重启前的最后一句/)
-  assert.match(sent[0].text, /在吗$/)
+  // 原本是 /在吗$/ —— 现在这句话后面还会跟一段「[这一轮] 你在 QQ 上…」的提醒，
+  // 所以「在吗」不再是整条的结尾，只要它在这个位置出现就算对。
+  assert.match(sent[0].text, /（下面是老大刚发来的）\n在吗/)
   const sessionId = channel.records.get('private:10001').sessionId
   assert.equal(channel.freshRecap(sessionId), '')
 
   channel.stop()
+})
+
+test('QqHistory：账本里不存 [语音] 那一行（两种形态都剥）', () => {
+  const history = new QqHistory(tmpFile(), { maxTurns: 4 })
+  // 新数据：换行还在的样子
+  history.append('private:10001', { u: '在吗', a: '在的\n[语音]我在呢老大' })
+  // 老数据：已经被 clip() 压成一行、标记跑到中间去了
+  history.append('private:10001', { u: '睡没', a: '还没呢 [语音]等你呢' })
+  // 中文方括号也认
+  history.append('private:10001', { u: '忙吗', a: '不忙【语音】你来啦' })
+
+  const turns = history.get('private:10001')
+  assert.deepEqual(turns.map((t) => t.a), ['在的', '还没呢', '不忙'])
+
+  // 复盘时不能再把「说给耳朵听的那句」当成说过的话提一遍
+  const recap = history.recap('private:10001')
+  assert.doesNotMatch(recap, /\[语音\]|【语音】/)
+  assert.doesNotMatch(recap, /我在呢老大|等你呢|你来啦/)
+  history.dispose()
+})
+
+test('QqHistory：__broken / __sessions 不会被当成聊天 key 读进来', () => {
+  const file = tmpFile('meta.json')
+  writeFileSync(
+    file,
+    JSON.stringify({
+      'private:10001': [{ u: '在吗', a: '在的', t: 1 }],
+      __broken: ['seedqq-bad-1'],
+      __sessions: { 'private:10001': 'seedqq-ok' },
+    }),
+    'utf8',
+  )
+  const history = new QqHistory(file).load()
+  // 以前只跳过了 __sessions，__broken 是数组、会被当成一组「轮次」塞进账本。
+  assert.deepEqual(history.get('__broken'), [])
+  assert.deepEqual(history.get('__sessions'), [])
+  assert.deepEqual(history.get('private:10001').map((t) => t.u), ['在吗'])
+  assert.equal(history.sessionOf('private:10001'), 'seedqq-ok')
+  assert.deepEqual(history.brokenIds(), ['seedqq-bad-1'])
+  history.dispose()
 })

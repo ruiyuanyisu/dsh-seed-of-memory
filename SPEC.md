@@ -431,7 +431,7 @@ embeddings(ref_type, ref_id, model_space, dim, vec BLOB, text_hash, created_at)
 ## 28. 群聊判断与按心情潜水（v0.17）
 
 - 纯函数在 `lib/qq/group.js`：
-  - `GROUP_DEFAULTS = { groupPolicy: 'smart', groupNames: ['阿鱼','Carys'], groupTopics: [...], groupMinGapSec: 120, groupMaxPerHour: 8, groupMaxPerDay: 60, groupQuietStart: 0, groupQuietEnd: 7, groupRandomChance: 0.06 }`。
+  - `GROUP_DEFAULTS = { groupPolicy: 'smart', groupNames: ['小忆','Seed'], groupTopics: [...], groupMinGapSec: 120, groupMaxPerHour: 8, groupMaxPerDay: 60, groupQuietStart: 0, groupQuietEnd: 7, groupRandomChance: 0.06 }`。
   - `socialEnergy(mood)` = `clamp01(0.5 + 0.5·valence + 0.5·(arousal − 0.35))`。
   - `interestScore(text, topics)`：命中一个词 0.5，每多一个 +0.15，上限 0.95。
   - `decideGroupReply({ text, mentioned, repliedToMe, mood, config, now, lastSpokeAt, hourCount, dayCount, random })` 顺序：

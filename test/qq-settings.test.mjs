@@ -47,9 +47,9 @@ test('字段缺省也稳，不会因为 undefined 和空串反复重建', () => 
 })
 
 test('手改 qq.json：白名单写成字符串也认，写成 null/数字也不会把所有人挡掉', () => {
-  assert.deepEqual(normalizeQqConfig({ allowPrivate: '2285450525' }).allowPrivate, ['2285450525'])
+  assert.deepEqual(normalizeQqConfig({ allowPrivate: '100000001' }).allowPrivate, ['100000001'])
   assert.deepEqual(normalizeQqConfig({ allowPrivate: '111, 222 333' }).allowPrivate, ['111', '222', '333'])
-  assert.deepEqual(normalizeQqConfig({ allowGroups: 478102093 }).allowGroups, ['478102093'])
+  assert.deepEqual(normalizeQqConfig({ allowGroups: 200000001 }).allowGroups, ['200000001'])
   assert.deepEqual(normalizeQqConfig({ allowPrivate: null }).allowPrivate, [])
   assert.deepEqual(normalizeQqConfig({ allowPrivate: [' 1 ', ''] }).allowPrivate, ['1'])
 })
@@ -101,14 +101,14 @@ test('通道拿到手写的怪配置时，行为按收好的算（白名单字�
     post_type: 'message',
     message_type: 'private',
     self_id: 1,
-    user_id: 2285450525,
+    user_id: 100000001,
     message_id: 7,
     time: Math.floor(Date.now() / 1000),
     message: [{ type: 'text', data: { text: '在吗' } }],
-    sender: { user_id: 2285450525 },
+    sender: { user_id: 100000001 },
   }
   // autoReply=false 只为让这条用例不进入需要等回复的那条路；要看的是「有没有被挡」。
-  const channel = makeChannel({ allowPrivate: '2285450525', allowGroups: [], autoReply: false })
+  const channel = makeChannel({ allowPrivate: '100000001', allowGroups: [], autoReply: false })
   await channel.start()
   await channel.handleEvent(event)
   const kinds = channel.status().log.map((line) => line.kind)
@@ -116,7 +116,7 @@ test('通道拿到手写的怪配置时，行为按收好的算（白名单字�
   assert.ok(kinds.includes('observe'), '字符串白名单应该认，不该 deny：' + kinds.join(','))
   assert.ok(!kinds.includes('deny'))
 
-  const off = makeChannel({ allowPrivate: ['2285450525'], autoReply: 'false' })
+  const off = makeChannel({ allowPrivate: ['100000001'], autoReply: 'false' })
   await off.start()
   await off.handleEvent(event)
   const offKinds = off.status().log.map((line) => line.kind)

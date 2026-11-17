@@ -21,7 +21,7 @@ test('ensure() creates anchors/self/us and reads them back', () => {
     assert.match(parts.anchors, /善良/)
     assert.match(parts.self, /我是谁/)
     assert.match(parts.us, /我们/)
-    assert.match(text, /我叫阿鱼/)
+    assert.match(text, /我叫小忆/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -104,14 +104,34 @@ test('exportTo() copies the three anchor files', () => {
   }
 })
 
-test('writeSection keeps headings and rejects empty text', () => {  const dir = sandbox()
+test('writeSection 整段替换之前留一份上一版', () => {
+  const dir = sandbox()
+  try {
+    const files = new IdentityFiles(dir).ensure()
+    files.writeSection('us', '- 第一版')
+    files.writeSection('us', '- 第二版')
+    const bak = readFileSync(join(dir, 'us.md.bak'), 'utf8')
+    assert.match(bak, /第一版/, '备份里应该是上一版')
+    assert.ok(!bak.includes('第二版'), '备份里不该有这一版')
+    assert.match(files.readRaw().us, /第二版/)
+    // 空文本被挡住时，不该顺手把备份也覆盖掉
+    assert.throws(() => files.writeSection('us', '  '))
+    assert.match(readFileSync(join(dir, 'us.md.bak'), 'utf8'), /第一版/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+
+test('writeSection keeps headings and rejects empty text', () => {
+  const dir = sandbox()
   try {
     const files = new IdentityFiles(dir).ensure()
     files.writeSection('us', '- 一条新的约定')
     assert.match(files.readRaw().us, /^# 我们/)
     assert.match(files.readRaw().us, /一条新的约定/)
-    files.writeSection('self', '# 我是谁\n\n我是阿鱼。')
-    assert.match(files.readRaw().self, /我是阿鱼/)
+    files.writeSection('self', '# 我是谁\n\n我是小忆。')
+    assert.match(files.readRaw().self, /我是小忆/)
     files.writeSection('anchors', '- 善良。')
     assert.match(files.readRaw().anchors, /善良/)
     assert.throws(() => files.writeSection('us', '   '))
