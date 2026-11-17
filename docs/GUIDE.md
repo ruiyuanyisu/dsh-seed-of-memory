@@ -135,6 +135,7 @@
 | `/seed remember <内容>` | 手动记一条 |
 | `/seed why <id>` | 这条怎么来的（含取代链） |
 | `/seed forget <id>` | 彻底删掉一条（索引一起删，不可恢复） |
+| `/seed mute <id> [7d\|off]` | 先别提：记着，但这段时间不进卡片、不主动开口（search 还查得到）；不带 id 看有哪些，`off` 取消 |
 | `/seed self` / `persona` / `style` | 看根 / 理想与特质 / 说话习惯 |
 | `/seed mood` | 心情、情绪内核四个数、最近那一下 |
 | `/seed feel` | 手动记一份感受（六维评估） |

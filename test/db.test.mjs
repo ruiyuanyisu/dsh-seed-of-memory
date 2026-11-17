@@ -291,3 +291,54 @@ test('1.4.x 记下的情绪和待记不会在升级时被摊成共用层', () =>
     dispose()
   }
 })
+
+test('别人的僵尸索引会拆掉；槽名归位撞了主键要报出来，不能静默吃行', () => {
+  const { root, dispose } = tempDir()
+  try {
+    const file = join(root, 'seed.db')
+    const db = openDatabase(file)
+    // 造出 1.4.x 那种建在废弃列上的索引（现在 emotions 已经没有 scope 列，
+    // 名字一样、列随便给一个 —— 迁移按名字拆，不看列）
+    db.exec('CREATE INDEX IF NOT EXISTS idx_emotion_scope ON emotions(label)')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_capture_session ON captures(session_id)')
+    // 同一小时里，野槽名 'me' 和 'gui' 各有一个点：归位时必然撞 (slot, at) 主键
+    const at = Date.now()
+    db.prepare(
+      "INSERT INTO qing_history (slot, at, mood, tone, energy, hurt, guilt, pressure, baseline) VALUES ('me', ?, 40, 50, 60, 0, 0, 0, 50)",
+    ).run(at)
+    db.prepare(
+      "INSERT INTO qing_history (slot, at, mood, tone, energy, hurt, guilt, pressure, baseline) VALUES ('gui', ?, 70, 60, 50, 0, 0, 0, 50)",
+    ).run(at)
+    db.close()
+
+    const warns = []
+    const original = console.warn
+    console.warn = (message) => {
+      warns.push(String(message))
+    }
+    let reopened = null
+    try {
+      reopened = openDatabase(file)
+    } finally {
+      console.warn = original
+    }
+    try {
+      const names = reopened
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => row.name)
+      assert.ok(!names.includes('idx_emotion_scope'), 'emotions.scope 上的僵尸索引该拆')
+      assert.ok(!names.includes('idx_capture_session'), 'captures.session_id 上的一样')
+      // 撞车确实丢了一行（设计如此），但必须说出来
+      assert.equal(reopened.prepare('SELECT count(*) AS n FROM qing_history').get().n, 1)
+      assert.ok(
+        warns.some((line) => line.includes('撞车丢 1 行')),
+        '丢行要留痕：' + warns.join(' | '),
+      )
+    } finally {
+      reopened.close()
+    }
+  } finally {
+    dispose()
+  }
+})

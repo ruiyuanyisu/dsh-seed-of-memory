@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { openDatabase } from '../lib/db.js'
 import { SeedStore } from '../lib/store.js'
-import { backupDaily, backupName, backupStatus, listBackups, pruneBackups, BACKUP_PREFIX } from '../lib/backup.js'
+import { backupDaily, backupName, backupStatus, listBackups, pruneBackups, verifyBackup, BACKUP_PREFIX } from '../lib/backup.js'
 
 function workspace() {
   const dir = mkdtempSync(join(tmpdir(), 'seed-backup-'))
@@ -139,4 +139,18 @@ test('清理只删真备份，同名目录和怪文件不碰，也不谎报删�
   } finally {
     box.dispose()
   }
+})
+
+
+test('0 字节的文件不算备份成功：integrity_check 会说它是个合法的空库', () => {
+  const ws = workspace()
+  const empty = join(ws.dir, 'empty.db')
+  writeFileSync(empty, Buffer.alloc(0))
+  assert.equal(verifyBackup(empty), false)
+  assert.equal(verifyBackup(join(ws.dir, '没有这个文件.db')), false)
+
+  const { db, file } = makeDb(ws.dir, 'real.db')
+  assert.equal(verifyBackup(file), true, '有内容的库该认')
+  closeQuietly(db)
+  ws.dispose()
 })

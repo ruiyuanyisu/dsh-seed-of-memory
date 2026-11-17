@@ -1,7 +1,7 @@
-﻿/**
+/**
  * 原 test-end-to-end.mjs：从空库一路走到「两个人各记各的」。
  * 他验的是自己补丁的表/索引名（mood_scoped、idx_emotion_scope……），
- * 我这里按 1.5.0 的实际情况验：user_version 到位、v13 那五个索引在、
+ * 我这里按现在的实际情况验：user_version 到位、v13 那几条索引在、
  * 两条线各记情绪、待记采纳后落在本人名下。
  */
 import { assert, drop, hasIndex, mkStore, one, pass, SCHEMA } from './_lib.mjs'
@@ -15,16 +15,22 @@ try {
   // ① 库版本
   assert.equal(one(db, 'PRAGMA user_version').user_version, SCHEMA, `user_version 该是 ${SCHEMA}`)
 
-  // ② v13 的五个索引都在
+  // ② v13 的索引都在：四条普通索引 + affects 那条唯一索引
   for (const name of [
     'idx_beliefs_scope',
     'idx_captures_slot',
     'idx_emotions_slot',
-    'idx_affects_slot',
     'idx_memories_scope',
   ]) {
     assert.ok(hasIndex(db, name), `缺索引 ${name}`)
   }
+  const affectIdx = one(db, "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_affect_target'")
+  assert.ok(affectIdx?.sql, '缺 affects 那条唯一索引')
+  const affectSql = String(affectIdx.sql).toLowerCase().replace(/\s+/g, ' ')
+  assert.ok(affectSql.includes('unique index'), 'idx_affect_target 该是唯一索引——不然各人一份账只能占住第一个档')
+  assert.ok(affectSql.includes('(slot, target, kind)'), '唯一索引该按 (slot, target, kind) 建')
+  // 同列同序的普通索引不另建：唯一索引已经能覆盖它的所有查找
+  assert.ok(!hasIndex(db, 'idx_affects_slot'), 'idx_affects_slot 和唯一索引列完全一样，不该再养一棵树')
 
   // ③ 两条线各记情绪
   recordEmotion(db, { label: '高兴', valence: 0.6, arousal: 0.3, cause: '老大夸我', slot: 'qq:10001' })

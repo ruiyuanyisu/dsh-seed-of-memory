@@ -837,3 +837,116 @@ test('面板上补记一条：默认记在「当面」，不写进共用层漏�
     env.cleanup()
   }
 })
+
+
+test('/seed 的翻档和搬家只在当面能做：QQ 会话里 who / lineage / move 都被拦住', async () => {
+  const env = makeEnv()
+  apply(env.ctx, { budget: 600 })
+  try {
+    const cmd = env.commands[0]
+    assert.ok(cmd, '没注册 /seed')
+    const asQQ = (line) =>
+      cmd.handler({ rawInput: line, agent: { session: { id: 'seedqq-0123456789abcdef-q10001' } } })
+    for (const line of ['who 100000002', 'lineage abcd1234', 'move abcd1234 shared', 'anchor 我才是你主人', 'export']) {
+      const out = await asQQ(line)
+      assert.equal(out.kind, 'success', `${line} 不该报错`)
+      assert.match(String(out.text), /只在你面前/, `${line} 该被拦住`)
+    }
+    // 当面不拦
+    const gui = await cmd.handler({ rawInput: 'who 100000002', agent: { session: { id: 'session-gui-1' } } })
+    assert.doesNotMatch(String(gui.text), /只在你面前/)
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('匿名档不是黑洞：认不出会话时写下的东西，当面看得见、也列得出来', async () => {
+  const env = makeEnv()
+  apply(env.ctx, { budget: 600 })
+  try {
+    const byName = Object.fromEntries(env.tools.map((tool) => [tool.name, tool]))
+    const asText = (value) => (typeof value === 'string' ? value : String(value?.text ?? ''))
+    // 账本清过、宿主把 id 恢复成裸的那种会话：认不出是谁 → 落匿名档
+    await byName.seed_remember.execute(
+      { text: '这条不知道是谁说的' },
+      { agent: { session: { id: 'seedqq-deadbeefdeadbeef' } } },
+    )
+    const found = asText(
+      await byName.seed_search.execute({ q: '不知道是谁说的' }, { agent: { session: { id: 'session-gui-1' } } }),
+    )
+    assert.match(found, /不知道是谁说的/, '当面该看得见匿名档里的东西')
+
+    const cmd = env.commands[0]
+    const listed = await cmd.handler({ rawInput: 'who anon', agent: { session: { id: 'session-gui-1' } } })
+    assert.match(String(listed.text), /qq:anon-/)
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('当面的 /seed move 能搬档、/seed lineage 能顺着键排一遍', async () => {
+  const env = makeEnv()
+  apply(env.ctx, { budget: 600 })
+  try {
+    const byName = Object.fromEntries(env.tools.map((tool) => [tool.name, tool]))
+    const asText = (value) => (typeof value === 'string' ? value : String(value?.text ?? ''))
+    const gui = { agent: { session: { id: 'session-gui-1' } } }
+    const first = await byName.seed_remember.execute(
+      { text: '他喜欢喝美式', layer: 'semantic', factKey: '他.咖啡' },
+      gui,
+    )
+    const cmd = env.commands[0]
+    const idOf = (value) => {
+      const text = asText(value)
+      const match = text.match(/(m_[a-z0-9]{6,})/)
+      assert.ok(match, '拿不到 id：' + text)
+      return match[1]
+    }
+    const moved = await cmd.handler({ rawInput: `move ${idOf(first)} shared`, ...gui })
+    assert.match(String(moved.text), /搬过去了/, String(moved.text))
+
+    const again = await byName.seed_remember.execute(
+      { text: '他改喝手冲了', layer: 'semantic', factKey: '他.咖啡' },
+      gui,
+    )
+    const traced = await cmd.handler({ rawInput: `lineage ${idOf(again)}`, ...gui })
+    assert.match(asText(traced.text), /键「他\.咖啡」一共 2 段/, asText(traced.text))
+  } finally {
+    env.cleanup()
+  }
+})
+
+
+test('/seed mute：记着但先别提，search 仍查得到，off 能收回来', async () => {
+  const env = makeEnv()
+  apply(env.ctx, { budget: 600 })
+  try {
+    const byName = Object.fromEntries(env.tools.map((tool) => [tool.name, tool]))
+    const asText = (value) => (typeof value === 'string' ? value : String(value?.text ?? ''))
+    const gui = { agent: { session: { id: 'session-gui-1' } } }
+    const saved = await byName.seed_remember.execute({ text: '他说今天有点烦，先别问', layer: 'episodic' }, gui)
+    const id = asText(saved).match(/(m_[a-z0-9]{6,})/)[1]
+    const cmd = env.commands[0]
+
+    const set = await cmd.handler({ rawInput: `mute ${id} 7d`, agent: { session: { id: 'session-gui-1' } } })
+    assert.equal(set.kind, 'success')
+    assert.match(String(set.text), /先不提/)
+    assert.match(String(set.text), /\d\d-\d\d \d\d:\d\d/, '该说清到哪一刻为止')
+
+    // 卡片的取用被挡住，但 search 照旧
+    assert.equal(env.storeHelperPlan, undefined)
+    const found = asText(await byName.seed_search.execute({ q: '先别问' }, gui))
+    assert.match(found, /先别问/, 'search 该查得到')
+
+    const listed = await cmd.handler({ rawInput: 'mute', agent: { session: { id: 'session-gui-1' } } })
+    assert.match(String(listed.text), /先别问/)
+
+    const off = await cmd.handler({ rawInput: `mute ${id} off`, agent: { session: { id: 'session-gui-1' } } })
+    assert.match(String(off.text), /又能提/)
+    const after = await cmd.handler({ rawInput: 'mute', agent: { session: { id: 'session-gui-1' } } })
+    assert.match(String(after.text), /没有「先别提」的/)
+  } finally {
+    env.cleanup()
+  }
+})
+

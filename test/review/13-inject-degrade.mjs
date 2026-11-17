@@ -23,7 +23,7 @@ function guarded(marker) {
 for (const marker of [
   'coreText = core.text',
   'card = store.card(',
-  'line = emotionLine()',
+  'line = emotionLine(',
   'const line = affectLine(',
   'const line = personaLine(',
   'const line = styleLine(',

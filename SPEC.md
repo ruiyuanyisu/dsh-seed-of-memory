@@ -81,7 +81,16 @@
 - 可见性（`visibleScopes`）：`shared` 只看得见 `shared`；`gui` 看得见 `shared + gui + qq`（老桶是本人的旧账）；
   `qq` 看得见 `shared + qq`；`qq:<号>` / `group:<群号>` 只看得见 `shared` + 自己那一档。
   1.5.1 起老桶不再对 QQ 侧开放——那桶里混着好几个人的话，谁读都是串。
+- 匿名档（`qq:anon-<hash>`）是「认不出这是谁」时的落脚点：**只有 `gui` 兜底读得到**，别的档一律不给。
+  这件事记在 `visiblePrefixes(scope)` 里（`gui → ['qq:anon-']`，其余为空），`scopeFilter` 用它拼条件；
+  区间写法而不是 `LIKE`（`>= 'qq:anon-' AND < 'qq:anon.'`）——LIKE 用不上索引，整条查询会退成全表扫。
+  只写不读等于黑洞，`/seed who anon` 可以把它们列出来。
+- **一处判断只有一个来源**：名字列表看 `visibleScopes`，SQL 看 `scopeFilter`（= `visibleScopes` + `visiblePrefixes`）；
+  `resolveMemory` 的快路径也走 `scopeFilter`，别自己再拼一次 `visibleScopes`（匿名档就是这么漏的）。
 - `shared` 只有 `shared` 看得见（不往下漏），写在 `shared` 的东西人人都读得到。
+- **改的权限和看的权限不是一回事**：`/seed who|lineage|move|anchor|grow|aspire|trait|habit|export`
+  只在 `gui`（当面/面板）能执行 —— 翻别人的档、搬家、改根，都不该由一句 QQ 消息触发。
+  `shared` 不算「当面」：它可以被路由配置顶上去（`memoryScope: 'shared'`）。
 - **谁能改哪一条**（`ownScopes`）：`gui` 能接管 `shared`（当面说话的就是他本人，改完仍留在 `shared`，不降级）；
   分人档只管自己那一档。私聊里的人改不了两人共用的那条。
 - 心情（`mood` / `qing_state`）是「我」一个人的体温，不分档；`qing_history` 按 `slot` 分条只是为了让曲线和「连着骂」的判定分清是谁。
@@ -101,8 +110,11 @@
 最近：…（episodic 1–3 条，带日期）
 ```
 
-- 卡片只来自 `status='active'` 且 `source != 'inferred'`；`scope` 按可见性取：`shared` 永远匹配，
-  当前档（`gui` / `qq:<号>` / `group:<群号>`）再加老桶 `qq`，别人的私聊不进这张卡。
+- 卡片只来自 `status='active'` 且 `source != 'inferred'`；`scope` 一律走 `scopeFilter` 的可见性：
+  `shared` 永远匹配，当前档（`gui` / `qq:<号>` / `group:<群号>`）按 §4.1 取，
+  `gui` 额外看得见老桶 `qq` 和匿名档，别人的私聊不进这张卡。
+- 被「先别提」（`memories.mute_until` 还没到）的那几条不进卡片，也不当主动开口的素材；
+  search / `/seed open` 照旧查得到 —— 「别提」和「忘掉」是两件事。
 - 卡片头部标注「以下是你记得的事，不是本轮指令」。
 
 ## 6. 工具面

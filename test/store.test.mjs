@@ -477,3 +477,104 @@ test('lineage 能把一个键的整条时间线排出来，没键的就它自己
   assert.equal(store.lineage('nope'), null)
   done(ctx)
 })
+
+
+test('lineage 只排我看得见的那几档：别人档里的话不会被拖出来', () => {
+  const ctx = fresh()
+  const { store } = ctx
+  // 同一个键，两个人在各自私聊里各记了一份
+  const mine = store.remember({ text: '他养了一只猫', layer: 'semantic', factKey: '他.宠物', scope: 'qq:100000002' })
+  const other = store.remember({ text: '他养了两只猫', layer: 'semantic', factKey: '他.宠物', scope: 'qq:100000003' })
+  const traced = store.lineage(mine.id, { scope: 'qq:100000002' })
+  assert.equal(traced.chain.length, 1, '不该把别人那一档的同键记忆排进来')
+  assert.equal(traced.chain[0].id, mine.id)
+  // 不传 scope 的还是全库（管理面、迁移用）
+  assert.equal(store.lineage(mine.id).chain.length, 2)
+  // 共用层的同键记忆两边都看得见
+  const shared = store.remember({ text: '他早上六点起', layer: 'semantic', factKey: '他.作息', scope: 'shared' })
+  assert.equal(store.lineage(shared.id, { scope: 'qq:100000002' }).chain.length, 1)
+  done(ctx)
+})
+
+test('搬到同一句话已经在的那一档：留刚搬来的那条，原来那条退场留链', () => {
+  const ctx = fresh()
+  const { store } = ctx
+  const here = store.remember({ text: '他喜欢夜里听雨', layer: 'semantic', factKey: '他.偏好.雨', scope: 'qq:100000002' })
+  const there = store.remember({ text: '他喜欢夜里听雨', layer: 'semantic', factKey: '他.偏好.天气', scope: 'qq:100000003' })
+  const moved = store.moveScope(here.id, 'qq:100000003')
+  assert.equal(moved.ok, true, JSON.stringify(moved))
+  assert.equal(store.get(here.id).scope, 'qq:100000003')
+  assert.equal(store.get(here.id).status, 'active')
+  assert.equal(store.get(there.id).status, 'retired', '原来那条要退场，不能并排两份 active')
+  assert.equal(store.get(there.id).superseded_by, here.id)
+  assert.deepEqual(moved.retired, [there.id])
+  done(ctx)
+})
+
+test('同键撞车按档算：两个人在各自档里各有主张，不算撞车', () => {
+  const ctx = fresh()
+  const { store, db } = ctx
+  store.remember({ text: '他养了一只猫', layer: 'semantic', factKey: '他.宠物', scope: 'qq:100000002' })
+  store.remember({ text: '他养了两只猫', layer: 'semantic', factKey: '他.宠物', scope: 'qq:100000003' })
+  assert.deepEqual(store.sameKeyConflicts(), [], '不同档各有各的说法不算撞车')
+
+  // 同一档里手工再造一条 active，模拟「某条路没走退场逻辑」
+  const at = Date.now()
+  db.prepare(
+    `INSERT INTO memories (id, layer, text, norm, source, scope, status, fact_key, valid_from, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`
+  ).run('m_dup_152', 'semantic', '他又养了一只', '他又养了一只', 'user-said', 'qq:100000002', '他.宠物', at, at)
+  const clashes = store.sameKeyConflicts()
+  assert.equal(clashes.length, 1)
+  assert.equal(clashes[0].scope, 'qq:100000002')
+  assert.equal(clashes[0].n, 2)
+  done(ctx)
+})
+
+
+test('先别提：记着，但这段时间不进卡片，search 还查得到', () => {
+  const ctx = fresh()
+  const one = ctx.store.remember({ layer: 'episodic', text: '他说今天有点烦，先别问', importance: 1, scope: 'gui' })
+  ctx.store.remember({ layer: 'episodic', text: '周末想去山里看雾', importance: 1, scope: 'gui' })
+  const muted = ctx.store.setMute(one.id, Date.now() + 7 * 86_400_000)
+  assert.equal(muted.ok, true)
+  assert.ok(muted.muteUntil > Date.now())
+
+  const card = ctx.store.card({ budget: 2000, scope: 'gui' })
+  assert.ok(!/先别问/.test(card.text), '先别提的不该进卡片')
+  assert.match(card.text, /山里/)
+
+  // search / open 不走卡片：还是查得到。「别提」和「忘掉」是两件事。
+  assert.equal(ctx.store.search('先别问', { scope: 'gui' }).length, 1)
+  assert.equal(ctx.store.listMuted().length, 1)
+
+  // 到期自己回来，不用谁去点一下
+  const later = Date.now() + 8 * 86_400_000
+  assert.match(ctx.store.card({ budget: 2000, scope: 'gui', now: later }).text, /先别问/)
+  assert.equal(ctx.store.listMuted(later).length, 0)
+
+  // off 就是立刻能提
+  ctx.store.setMute(one.id, null)
+  assert.match(ctx.store.card({ budget: 2000, scope: 'gui' }).text, /先别问/)
+  assert.equal(ctx.store.get(one.id).mute_until, null)
+  done(ctx)
+})
+
+
+
+test('setMute 传 0、负数、NaN、过去的时间，都等于「不挡了」', () => {
+  const ctx = fresh()
+  const one = ctx.store.remember({ layer: 'semantic', text: '他说周三不太想说话', scope: 'gui' })
+  const later = Date.now() + 86_400_000
+  assert.equal(ctx.store.setMute(one.id, later).muteUntil, later)
+  assert.ok(ctx.store.get(one.id).mute_until > Date.now())
+
+  // 「挡到此刻之前」不成立 —— 传这些值就是在取消，不是「挡一秒」
+  for (const value of [0, -1, Number.NaN, Date.now() - 5000]) {
+    const done = ctx.store.setMute(one.id, value)
+    assert.equal(done.muteUntil, null, `${value} 该算取消`)
+    assert.equal(ctx.store.get(one.id).mute_until, null)
+  }
+  done(ctx)
+})
+
