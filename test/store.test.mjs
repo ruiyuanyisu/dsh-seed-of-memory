@@ -244,3 +244,30 @@ test('一条超长记忆不该把整张卡挡空', () => {
   assert.ok(card.text.length <= 600)
   done(ctx)
 })
+
+test('插入半途失败时整条退掉，不留「列表里有、搜索搜不到」的半截', () => {
+  const ctx = fresh()
+  const count = () => Number(ctx.db.prepare('SELECT COUNT(*) AS n FROM memories').get().n)
+  const before = count()
+  const ftsSql = ctx.db.prepare("SELECT sql FROM sqlite_master WHERE name = 'memories_fts'").get()?.sql
+  ctx.db.exec('DROP TABLE memories_fts')
+  ctx.db.exec('CREATE TABLE memories_fts (wrong_column TEXT)')
+  assert.throws(() => ctx.store.remember({ layer: 'episodic', text: '这条应该整条退掉' }))
+  assert.equal(count(), before, '主表不该留下半条')
+  ctx.db.exec('DROP TABLE memories_fts')
+  if (ftsSql) ctx.db.exec(ftsSql)
+  done(ctx)
+})
+
+test('替换旧记录失败时，旧的那条不能已经被退场', () => {
+  const ctx = fresh()
+  const kept = ctx.store.remember({ layer: 'semantic', text: '他的生日在三号', factKey: '他.生日' })
+  ctx.db.exec('DROP TABLE memories_fts')
+  ctx.db.exec('CREATE TABLE memories_fts (wrong_column TEXT)')
+  assert.throws(() => ctx.store.remember({ layer: 'semantic', text: '他的生日改到十四号', factKey: '他.生日' }))
+  const still = ctx.store.get(kept.id)
+  assert.equal(still?.status, 'active', '只退不进就等于把这条记忆弄丢了')
+  ctx.db.exec('DROP TABLE memories_fts')
+  ctx.db.exec('CREATE TABLE memories_fts (id TEXT PRIMARY KEY, text TEXT)')
+  done(ctx)
+})

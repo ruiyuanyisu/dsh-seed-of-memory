@@ -129,7 +129,7 @@ pnpm add dsh-seed-of-memory
 
 运行时装在 `~/.dsh/seed-of-memory/embedding-runtime/`，不覆盖 `seed.db`，卸载就是删这个目录。
 
-**端口**：默认 `127.0.0.1:11435`。如果和别的 embedding 服务（比如 SurfCore 的 runtime）冲突，改启动脚本里的 `OLLAMA_HOST`，或在 config 里改 `embeddingPort`。
+**端口**：默认 `127.0.0.1:11435`。如果和别的 embedding 服务冲突，改启动脚本里的 `OLLAMA_HOST`，或在 config 里改 `embeddingPort`。
 
 配置项：
 
@@ -173,23 +173,25 @@ pnpm add dsh-seed-of-memory
 
 ## QQ 通道（可选，SnowLuma）
 
-**不装 SurfCore 也完全能用**：Seed 自己就能回消息，只要有一个 OneBot 11 实现（SnowLuma、NapCat、Lagrange 都行）。SurfCore 只是另一种玩法——如果你已经用它的桥管 QQ，就让桥回、Seed 只听（见下面「只听不回」）。完全不接 QQ 也可以，记忆和面板照常。
+Seed 自己就是桥：只要有一个 OneBot 11 实现（SnowLuma、NapCat、Lagrange 都行）就行。
+接上之后 **QQ 私聊/群聊会变成一颗正常的 Agent 会话**，根、记忆卡、人格、心情、自动捕获全都在，
+和 Web 里说话没有区别。完全不接 QQ 也可以，记忆和面板照常。
 
-如果你在用 SnowLuma 把本机 QQ 号挂成 OneBot 11，可以让 Seed of Memory 直接接管消息：**QQ 私聊/群聊会变成一颗正常的 Agent 会话**，所以根、记忆卡、人格、心情、自动捕获全都在，和 Web 里说话没有区别。Seed 自己就是桥——不需要再装一份 SurfCore。
+### 第一次接 QQ
 
-### 第一次接 QQ（不用 SurfCore）
+1. 把 **SnowLuma** 解压到**没有空格、没有中文**的路径（自带 Node，不用另装），双击 `launcher.bat`——那个黑窗口就是它本体，关了 QQ 就掉线。
+2. 浏览器打开 `http://127.0.0.1:5099`，第一次会让你设 WebUI 密码，然后扫码登录。
+3. WebUI → **OneBot 11**：HTTP `3000` 和 WebSocket `3001` 都开。**两边各有一个 accessToken，默认不一样**——要么改成一致，要么只开 WS（Seed 优先走 WS，连不上才退 HTTP）。
+4. 面板「QQ」页填 `ws://127.0.0.1:3001`、`http://127.0.0.1:3000`、令牌，再填允许的私聊 QQ / 群号（`*` 表示全部），保存。
+5. 点「检测连接」——它会逐步告诉你卡在哪：没启动 / QQ 没登录 / 端口没开 / 令牌不对 / 白名单没填。
 
-1. 下载 **SnowLuma**（自带 Node，解压即用），双击 `launcher.bat` 启动。
-2. 浏览器打开 `http://127.0.0.1:5099`，扫码登录要挂机的 QQ 号。
-3. SnowLuma → 设置 → **OneBot 11**：打开 HTTP `3000` 与 WebSocket `3001`，两边填同一个 `accessToken`。
-4. 面板「QQ」页填 `ws://127.0.0.1:3001`、`http://127.0.0.1:3000`、这个 token，填允许的私聊 QQ / 群号（`*` 表示全部），保存。
-5. 点「检测连接」——面板会逐步告诉你卡在哪：SnowLuma 没启动 / QQ 没登录 / 端口没开 / 白名单没填 / 连接没建立。
+连不上的对照表在 `docs/GUIDE.md`：`ECONNREFUSED`、`401 未经授权`、一直 `disconnected`、连上但发消息没反应，各有对应原因。
 
 连上后，在 QQ 里发给白名单里的人/群一句话即可；群里默认要 @ 才回（也可开「群聊判断」让它看情况接话），发 `/reset` 可以丢掉旧会话重新开始。回复会像真人一样按句子分成 1–3 条、中间隔一秒左右（`qq.json` 的 `burstMax` / `burstGapMs` 可调）。
 
 注意：
 
-- **同一个 SnowLuma 账号同时只能有一个桥回话。** 如果还开着别的桥（比如 SurfCore 的 bridge），会双回复；启用本通道前先停掉它，或换一个账号。
+- **同一个 QQ 号同时只能有一个桥回话**，否则会双回复。
 - 配置存在 `<数据目录>/qq.json`（默认 `~/.dsh/seed-of-memory/qq.json`），token 在面板里只显示前后各 4 位。
 - QQ 通道默认关闭（`enabled: false`），面板点过「连接」才会持久化开启。
 
@@ -251,7 +253,7 @@ qq.json 里可以显式指定 provider / model / reasoningEffort；不填会跟�
 { "provider": "deepseek-account", "model": "deepseek-flash", "reasoningEffort": "max" }
 ```
 
-同一个 QQ 号只能有一个桥在回话：启用 Seed 的 QQ 通道前，请停用 SurfCore 的 qq-bridge（dsh.profile.bundles 里关掉 surfcore，或在它的设置里断开），否则会双回复。
+同一个 QQ 号只能有一个桥在回话：启用 Seed 的 QQ 通道前，先把别的桥断开，否则会双回复。
 
 ### QQ 语音
 
@@ -321,15 +323,15 @@ qq.json 里可以显式指定 provider / model / reasoningEffort；不填会跟�
 - 判断是纯函数（`lib/qq/group.js`），日志里会写 `join`（接了，附电量/兴趣）或 `lurk`（没接，附原因），面板能看到。
 - 说话电量 = `0.5 + 0.5×愉悦 + 0.5×(唤醒−0.35)`，跟着当前 mood 走；低落时（愉悦 ≤ -0.3 且唤醒 ≤ 0.45）不主动插话。
 
-### 只听不回：把回话交给 SurfCore 的桥（v1.1.1）
+### 只听不回：把回话交给别的桥
 
-如果同一个 QQ 号还接着 SurfCore 的桥（reserved2 模式），两边都回会重复。可以这样分工：
+如果同一个 QQ 号还接着另一套桥，两边都回会重复。可以这样分工：
 
 - 在面板「QQ」页勾上 **「只听不回」**（`qq.json` 里是 `"autoReply": false`），或在配置里手动加。
-- Seed 仍然连着 SnowLuma：会记录你最后说话的时间（主动消息靠这个算「多久没说话」），但**不会建会话、不会回任何消息**；聊天回复全交给桥。
+- Seed 仍然连着 OneBot：会记录你最后说话的时间（主动消息靠这个算「多久没说话」），但**不会建会话、不会回任何消息**；聊天回复全交给那套桥。
 - 主动找主人照常工作——它走的是同一条连接，只是发消息，不参与对话。
 - 日志里会写 `observe`（只听不回），方便确认没抢话。
-- 反过来，如果想让 Seed 接管聊天，把勾去掉即可（记得先关桥，别双回）。
+- 反过来，如果想让 Seed 接管聊天，把勾去掉即可（记得先关另一套桥，别双回）。
 
 ## 与「刷B站」插件兼容（可选）
 

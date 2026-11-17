@@ -157,3 +157,31 @@ test('清空后重扫：pending 回到总数，reindex 补齐', async () => {
     assert.equal(rebuilt.stats.pending, 0)
   })
 })
+
+test('reindex 会一直补到没有待办，不是只补一批', async () => {
+  await withDb(async ({ db, store }) => {
+    for (let i = 0; i < 20; i += 1) store.remember({ text: `第 ${i} 条`, layer: 'episodic' })
+    const index = new SemanticIndex(db, fakeEmbedder(), { space: 'fake@4-v1' })
+
+    const rebuilt = await index.reindex({ batch: 8 })
+    assert.equal(rebuilt.ok, true)
+    // 老实现只补 8 条就返回了，按钮上写着「重建索引」，实际留下 12 条空的。
+    assert.equal(rebuilt.embedded, 20, '20 条全补进来，不是只补一批')
+    assert.equal(rebuilt.remaining, 0)
+    assert.ok(rebuilt.rounds >= 3, `至少要转三轮，实际 ${rebuilt.rounds} 轮`)
+    assert.equal(rebuilt.stats.pending, 0)
+  })
+})
+
+test('reindex 有刹车：轮数用光就先返回，remaining 如实报', async () => {
+  await withDb(async ({ db, store }) => {
+    for (let i = 0; i < 20; i += 1) store.remember({ text: `第 ${i} 条`, layer: 'episodic' })
+    const index = new SemanticIndex(db, fakeEmbedder(), { space: 'fake@4-v1' })
+
+    const partial = await index.reindex({ batch: 8, maxRounds: 1 })
+    assert.equal(partial.ok, true)
+    assert.equal(partial.embedded, 8)
+    assert.equal(partial.remaining, 12, '剩下的要如实报出来，别让人以为全好了')
+    assert.equal(partial.rounds, 1)
+  })
+})
