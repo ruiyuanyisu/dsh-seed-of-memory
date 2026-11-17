@@ -1,4 +1,4 @@
-import test from 'node:test'
+﻿import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -569,7 +569,7 @@ test('重启之后还记得刚才聊到哪：qq-history 接上话', async () => 
     const body = agents2.created[0].message.content[0].text
     assert.match(body, /聊过的最后几句/)
     assert.match(body, /别熬夜/)
-    assert.match(body, /下面是老大刚发来的/)
+    assert.match(body, /下面是刚发来的/)
     assert.match(body, /在吗/)
     second.channel.stop()
   } finally {
@@ -605,7 +605,7 @@ test('旧会话记录坏掉时，换一个新 id 也要把会话建起来', asyn
     message: [{ type: 'text', data: { text: '在吗' } }],
   })
   assert.equal(seen.length, 2, '第一个 id 建不起来时，应该换一个新 id 再试一次')
-  assert.match(seen[1], /^seedqq-[a-z0-9]+-r[a-z0-9]+$/)
+  assert.match(seen[1], /^seedqq-[0-9a-f]+-q10001-r[a-z0-9]+$/)
   // 会话确实建起来了（没丢消息，只是这一轮没内容可回）
   assert.equal(channel.records.size, 1)
   channel.stop()
@@ -760,7 +760,7 @@ test('换过 id 之后重启，还接着用记下来的那个会话', async () =
   await one.channel.handleEvent(privateEvent(71, '在吗'))
   one.channel.stop()
   const kept = first[0]
-  assert.match(kept, /^seedqq-[a-z0-9]+$/)
+  assert.match(kept, /^seedqq-[0-9a-f]+-q10001$/, '新会话 id 里要缝着这是谁')
   history1.dispose()
 
   // 重启：账本里有 id，就该先 resume 这个 id（而不是回到老的 hash id 再换一次）
@@ -1080,4 +1080,145 @@ test('主动消息带语音时，文字照样先发（语音是加一层，不�
   )
   assert.match(source, /let spoke = false/, '要先发文字，语音只当补一层')
   assert.match(source, /spoke = await this\.#sendVoice/)
+})
+
+test('「放她进来」这类指令要活过重启：存盘、下次启动还认得', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seed-orders-'))
+  const historyFile = join(dir, 'qq-history.json')
+  const config = { debounceMs: 0, historyFile, orderTriggers: ['放她进来'] }
+  const first = makeChannel({ config })
+  await first.channel.start()
+  await first.channel.handleEvent(privateEvent(1, '放她进来'))
+  first.channel.stop()
+
+  const second = makeChannel({ config })
+  const orders = second.channel.status().orders
+  assert.equal(orders.length, 1, '重启后那条指令还在，安全门不会又锁回去')
+  assert.equal(orders[0].from, '10001')
+  assert.match(orders[0].text, /放她进来/)
+  second.channel.stop()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('私聊的记忆档落在本人名下：qq:<号>，群聊 group:<群号>', async () => {
+  const { channel } = makeChannel({ config: { debounceMs: 0 } })
+  await channel.start()
+  await channel.handleEvent(privateEvent(1, '在吗'))
+  const privateSession = [...channel.records.values()].find((r) => r.scope === 'private')
+  assert.equal(channel.scopeOf(privateSession.sessionId), 'qq:10001', '私聊不跟别的号共用一档')
+  await channel.handleEvent({
+    post_type: 'message',
+    message_type: 'group',
+    self_id: 10000,
+    group_id: 123456,
+    user_id: 10001,
+    message_id: 2,
+    message: [{ type: 'at', data: { qq: '10000' } }, { type: 'text', data: { text: ' 在吗' } }],
+  })
+  const groupSession = [...channel.records.values()].find((r) => r.scope === 'group')
+  assert.equal(channel.scopeOf(groupSession.sessionId), 'group:123456', '群里的话归群，不归某个人')
+  channel.stop()
+})
+
+test('[图片] 那行只认图片：手打一个别的路径不会被当图读进上下文', async () => {
+  const source = readFileSync(new URL('../lib/qq/channel.js', import.meta.url), 'utf8')
+  assert.match(source, /const IMAGE_FILE_RE = \/\\\.\(\?:jpe\?g\|png\|webp\|gif\|bmp\)\$\//i, '要有图片扩展名白名单')
+  assert.match(source, /if \(!IMAGE_FILE_RE\.test\(path\)\)/, '不在白名单里就跳过，别 readFileSync 照读')
+})
+
+test('停机时没处理完的那条不静默消失：记进账本', () => {
+  const source = readFileSync(new URL('../lib/qq/channel.js', import.meta.url), 'utf8')
+  assert.match(source, /this\.history\?\.append\?\.\(key, \{ u: text \}\)/, '攒着的那条要落进账本')
+  assert.match(source, /waiter\?\.resolve\?\.\(''\)/, '等回复的先给个空结果，别把定时器留着')
+})
+
+test('群聊里要说清是谁在说：这一轮的话要带发言人', async () => {
+  const agents = fakeAgents({ reply: '嗯。' })
+  const { channel } = makeChannel({ agents, config: { debounceMs: 0 } })
+  await channel.start()
+  await channel.handleEvent({
+    post_type: 'message',
+    message_type: 'group',
+    self_id: 10000,
+    group_id: 123456,
+    user_id: 10001,
+    sender: { user_id: 10001, card: '张三', nickname: 'zs' },
+    message_id: 7,
+    message: [{ type: 'at', data: { qq: '10000' } }, { type: 'text', data: { text: ' 在吗' } }],
+  })
+  const body = agents.created[0].message.content[0].text
+  assert.match(body, /群里好几个人的话都在这个会话里/, '要提醒它群里不止一个人')
+  assert.match(body, /张三/, '要带上说话那个人')
+  channel.stop()
+})
+
+test('没配 routes 的老白名单也按人分档：不再全写进 qq 一个桶', async () => {
+  const agents = fakeAgents({ reply: '嗯。' })
+  const { channel } = makeChannel({
+    agents,
+    config: { debounceMs: 0, allowPrivate: ['10001', '10002'] },
+  })
+  await channel.start()
+  for (const uid of [10001, 10002]) {
+    await channel.handleEvent({
+      post_type: 'message',
+      message_type: 'private',
+      self_id: 10000,
+      user_id: uid,
+      message_id: uid,
+      message: [{ type: 'text', data: { text: '你好' } }],
+    })
+  }
+  const scopes = agents.created.map((a) => channel.scopeOf(a.sessionId)).sort()
+  assert.deepEqual(scopes, ['qq:10001', 'qq:10002'])
+  // 两个号的会话是两条，各自一档
+  assert.equal(new Set(agents.created.map((a) => a.sessionId)).size, 2)
+  channel.stop()
+})
+
+
+
+test('重启之后也认得出这个会话是谁的：id 里缝着号，账本里也查得到', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'seedqq-scope-'))
+  const file = join(dir, 'qq-history.json')
+  try {
+    const history = new QqHistory(file)
+    const one = makeChannel({ history, config: { replyTimeoutMs: 20, silentFallback: false } })
+    one.channel.start()
+    await one.channel.handleEvent(privateEvent(81, '在吗'))
+    const sid = one.channel.records.get('private:10001')?.sessionId ?? ''
+    assert.match(sid, /-q10001$/, '新会话 id 里要缝着这是谁')
+    one.channel.stop()
+    history.dispose()
+
+    // 重启：内存里那张表空了，只剩账本文件
+    const history2 = new QqHistory(file)
+    const two = makeChannel({ history: history2, config: { replyTimeoutMs: 20, silentFallback: false } })
+    assert.equal(two.channel.scopeOf(sid), 'qq:10001', '账本里记着这个 id 是谁的')
+
+    // 老格式（纯 hash、没有后缀）的会话 id：只能靠账本反查
+    history2.mapSession('private:10001', 'seedqq-deadbeefdeadbeef')
+    assert.equal(two.channel.scopeOf('seedqq-deadbeefdeadbeef'), 'qq:10001', '老 id 也认得出')
+
+    // 路由表说这条会话记在当面：账本反查要听路由的，不是一律算成 qq:号
+    const guiHistory = new QqHistory(join(dir, 'gui-history.json'))
+    guiHistory.mapSession('private:10001@r1', 'seedqq-cafebabecafebabe')
+    const gui = makeChannel({
+      history: guiHistory,
+      config: {
+        replyTimeoutMs: 20,
+        silentFallback: false,
+        routes: [{ id: 'r1', memoryScope: 'gui', accept: { private: ['10001'], groups: [] } }],
+      },
+    })
+    assert.equal(gui.channel.scopeOf('seedqq-cafebabecafebabe'), 'gui', '路由说记在当面就记在当面')
+    guiHistory.dispose()
+
+    // 谁都不是的 id：认不出来就说认不出来
+    assert.equal(two.channel.scopeOf('seedqq-0000000000000000'), null)
+    history2.dispose()
+    two.channel.stop()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

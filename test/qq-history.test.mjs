@@ -144,7 +144,7 @@ test('QqChannel：回完一句就进本地账本，重启后的第一个会话�
   assert.match(sent[0].text, /重启前的最后一句/)
   // 原本是 /在吗$/ —— 现在这句话后面还会跟一段「[这一轮] 你在 QQ 上…」的提醒，
   // 所以「在吗」不再是整条的结尾，只要它在这个位置出现就算对。
-  assert.match(sent[0].text, /（下面是老大刚发来的）\n在吗/)
+  assert.match(sent[0].text, /（下面是刚发来的）\n在吗/)
   const sessionId = channel.records.get('private:10001').sessionId
   assert.equal(channel.freshRecap(sessionId), '')
 

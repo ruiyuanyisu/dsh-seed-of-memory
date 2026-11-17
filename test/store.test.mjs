@@ -271,3 +271,209 @@ test('替换旧记录失败时，旧的那条不能已经被退场', () => {
   ctx.db.exec('CREATE TABLE memories_fts (id TEXT PRIMARY KEY, text TEXT)')
   done(ctx)
 })
+
+test('当面说的不跑到别人的私聊里，共用的两边都看得见', () => {
+  const ctx = fresh()
+  ctx.store.remember({ layer: 'semantic', text: '他喜欢夜里听雨', scope: 'gui' })
+  ctx.store.remember({ layer: 'semantic', text: '我们约好寒假讲故事', scope: 'shared' })
+  ctx.store.remember({ layer: 'semantic', text: '张三在厂里上夜班', scope: 'qq:10001' })
+
+  const gui = ctx.store.search('夜', { scope: 'gui' }).map((r) => r.text)
+  assert.deepEqual(gui, ['他喜欢夜里听雨'], '当面这条是自己的，别人的不该进来')
+
+  const own = ctx.store.search('夜', { scope: 'qq:10001' }).map((r) => r.text)
+  assert.deepEqual(own, ['张三在厂里上夜班'], '自己的私聊看自己的')
+  assert.ok(!own.includes('他喜欢夜里听雨'), 'gui 档不该漏到 QQ 上')
+
+  const stranger = ctx.store.search('夜', { scope: 'qq:20002' }).map((r) => r.text)
+  assert.deepEqual(stranger, [], '另一个人不该看见张三说的话')
+
+  const shared = ctx.store.search('寒假', { scope: 'qq:20002' }).map((r) => r.text)
+  assert.deepEqual(shared, ['我们约好寒假讲故事'], '共用的到哪都看得见')
+
+  assert.ok(ctx.store.card({ scope: 'qq:20002' }).text.includes('我们约好寒假讲故事'))
+  assert.ok(!ctx.store.card({ scope: 'qq:20002' }).text.includes('他喜欢夜里听雨'))
+  done(ctx)
+})
+
+test('老 qq 桶只剩「当面」看得见：私聊和群都不再自动读它', () => {
+  const ctx = fresh()
+  // 1.4.x 时代写下的群/私聊记忆：scope = 'qq'，里面混着好几个人的话
+  ctx.store.remember({ layer: 'semantic', text: '老大十一月换了键盘', scope: 'qq' })
+  const seen = ctx.store.search('键盘', { scope: 'gui' }).map((r) => r.text)
+  assert.deepEqual(seen, ['老大十一月换了键盘'], '当面还看得见旧账，升级不至于失忆')
+
+  const stranger = ctx.store.search('键盘', { scope: 'qq:10001' }).map((r) => r.text)
+  assert.deepEqual(stranger, [], '别人的私聊不再读得到老桶 —— 那桶里混着别人的话')
+  const group = ctx.store.search('键盘', { scope: 'group:20002' }).map((r) => r.text)
+  assert.deepEqual(group, [], '群也一样')
+
+  // 老桶读不到了，也就不该再被谁接管：写自己的档，老条原样留着
+  const r = ctx.store.remember({
+    layer: 'semantic',
+    text: '老大十一月换了静音键盘',
+    factKey: '老大.键盘',
+    scope: 'qq:10001',
+  })
+  assert.equal(r.action, 'inserted')
+  assert.equal(ctx.store.get(r.id).scope, 'qq:10001')
+  const legacy = ctx.db.prepare("SELECT status FROM memories WHERE scope = 'qq'").all()
+  assert.deepEqual(legacy.map((row) => row.status), ['active'], '老桶那条没被动')
+  done(ctx)
+})
+
+test('当面把共用层的事再说一遍：不新建第二条，改的是那一条', () => {
+  const ctx = fresh()
+  const first = ctx.store.remember({ layer: 'semantic', text: '他叫阿甲', factKey: '他.名字', scope: 'shared' })
+  const second = ctx.store.remember({ layer: 'semantic', text: '他叫阿乙', factKey: '他.名字', scope: 'gui' })
+  assert.equal(second.action, 'superseded')
+  assert.equal(ctx.store.get(first.id).status, 'retired', 'shared 那条退场')
+  assert.equal(ctx.store.get(second.id).scope, 'shared', '新那条还是共用层的：QQ 那边也得看见')
+  const active = ctx.db
+    .prepare("SELECT scope, text FROM memories WHERE fact_key = '他.名字' AND status = 'active'")
+    .all()
+  assert.deepEqual(active.map((row) => [row.scope, row.text]), [['shared', '他叫阿乙']], '卡片里只会有一个版本')
+  assert.ok(ctx.store.card({ scope: 'qq:10001' }).text.includes('他叫阿乙'), '别人那边也看到改过之后的版本')
+  done(ctx)
+})
+
+test('同键撞车只在同一个档里算：别人的账我来改不了', () => {
+  const ctx = fresh()
+  const mine = ctx.store.remember({
+    layer: 'semantic',
+    text: '我住在城东',
+    factKey: '我.住处',
+    scope: 'gui',
+    confidence: 0.95,
+  })
+  // 另一个人的私聊里说了同一个键：不该把当面那条退掉
+  ctx.store.remember({
+    layer: 'semantic',
+    text: '我住在城西',
+    factKey: '我.住处',
+    source: 'inferred',
+    confidence: 0.9,
+    scope: 'qq:10001',
+  })
+  assert.equal(ctx.store.get(mine.id).status, 'active')
+  const active = ctx.db
+    .prepare("SELECT scope, count(*) AS n FROM memories WHERE fact_key = '我.住处' AND status = 'active' GROUP BY scope")
+    .all()
+  assert.deepEqual(active.map((r) => [r.scope, Number(r.n)]), [['gui', 1], ['qq:10001', 1]])
+  done(ctx)
+})
+
+
+test('搜索也只搜看得见的：别人私聊里说的，不会从这边被搜出来', () => {
+  const ctx = fresh()
+  const { store } = ctx
+  store.remember({ text: '他养了一只橘猫', layer: 'semantic', scope: 'qq:10001' })
+  store.remember({ text: '他怕冷，冬天要穿两层', layer: 'semantic', scope: 'qq:20002' })
+  store.remember({ text: '他喜欢深夜写代码', layer: 'semantic', scope: 'shared' })
+
+  const mine = store.search('他', { limit: 10, scope: 'qq:10001' }).map((row) => row.text)
+  assert.ok(mine.some((t) => t.includes('橘猫')))
+  assert.ok(!mine.some((t) => t.includes('两层')), '别人的私事不该出来')
+  assert.ok(mine.some((t) => t.includes('深夜')), '共用的照样看得见')
+
+  const gui = store.search('他', { limit: 10, scope: 'gui' }).map((row) => row.text)
+  assert.ok(!gui.some((t) => t.includes('橘猫')), '当面这一档不带 QQ 私聊的东西')
+  assert.ok(gui.some((t) => t.includes('深夜')))
+
+  // 不传 scope 的老调用方（管理面/导出）还是全库
+  assert.ok(store.search('他', { limit: 10 }).length >= 3)
+  done(ctx)
+})
+
+test('同键撞车看得见：正常 0 条，手工造出两条 active 就能报出来', () => {
+  const ctx = fresh()
+  const { store, db } = ctx
+  assert.deepEqual(store.sameKeyConflicts(), [])
+
+  // 正常路径：同一个键说两遍，旧的那条会退场，不该留下两条 active
+  store.remember({ text: '他喜欢喝美式', layer: 'semantic', factKey: '他.咖啡', scope: 'gui' })
+  store.remember({ text: '他改喝手冲了', layer: 'semantic', factKey: '他.咖啡', scope: 'gui' })
+  assert.deepEqual(store.sameKeyConflicts(), [], '正常替换不该算撞车')
+
+  // 手工绕过退场逻辑造一份，模拟「某条路没走 factKey 分支」
+  const base = store.remember({ text: '他喜欢喝美式', layer: 'semantic', factKey: '他.咖啡', scope: 'shared' })
+  assert.ok(base?.id)
+  db.prepare(`UPDATE memories SET status = 'active' WHERE id = ?`).run(base.id)
+  db.prepare(`UPDATE memories SET status = 'active' WHERE fact_key = ? AND id <> ?`).run('他.咖啡', base.id)
+
+  const clashes = store.sameKeyConflicts()
+  assert.equal(clashes.length, 1)
+  assert.equal(clashes[0].factKey, '他.咖啡')
+  assert.ok(Number(clashes[0].n) >= 2)
+  done(ctx)
+})
+
+test('listExact 只认那一档，不像 list 那样把共用层带出来', () => {
+  const ctx = fresh()
+  const { store } = ctx
+  store.remember({ text: '他喜欢喝美式', layer: 'semantic', scope: 'shared' })
+  store.remember({ text: '别人说他最近爱喝美式', layer: 'episodic', scope: 'qq:100000002' })
+
+  // list({ scope }) 是「以这个视角能看到的」，会把 shared 一起带出来
+  assert.equal(store.list({ scope: 'qq:100000002' }).length, 2, '视角可见的应当含共用层')
+
+  // listExact 问的是「这一档里到底存了什么」
+  const exact = store.listExact('qq:100000002')
+  assert.equal(exact.length, 1)
+  assert.equal(exact[0].scope, 'qq:100000002')
+  assert.equal(store.listExact('qq:100000009').length, 0)
+  done(ctx)
+})
+
+test('moveScope 能搬档，同键的旧说法会退场留链', () => {
+  const ctx = fresh()
+  const { store, db } = ctx
+  const mine = store.remember({ text: '他喜欢喝美式', layer: 'semantic', factKey: '他.咖啡', scope: 'gui' })
+  assert.ok(mine?.id)
+
+  // 新档里已经有一条同键的（模拟以前别人说过一遍）
+  const other = store.remember({ text: '那个人爱喝美式', layer: 'semantic', factKey: '他.咖啡', scope: 'qq:100000002' })
+  assert.ok(other?.id)
+  db.prepare(`UPDATE memories SET status = 'active' WHERE id = ?`).run(other.id)
+
+  const moved = store.moveScope(mine.id, 'shared')
+  assert.equal(moved.ok, true)
+  assert.equal(moved.row.scope, 'shared')
+  // 搬进 shared 时，qq 档那条同键的不该被误退（不同档，撞不上）
+  assert.equal(store.get(other.id).status, 'active')
+
+  // 搬回 qq 档：这时才和那条同键的撞上，旧的退场
+  const back = store.moveScope(mine.id, 'qq:100000002')
+  assert.equal(back.ok, true)
+  assert.equal(back.retired.length, 1)
+  assert.equal(store.get(other.id).status, 'retired')
+  assert.equal(store.get(other.id).superseded_by, mine.id)
+
+  assert.equal(store.moveScope(mine.id, 'shared').row.scope, 'shared')
+  assert.equal(store.moveScope('nope', 'shared').ok, false)
+  done(ctx)
+})
+
+test('lineage 能把一个键的整条时间线排出来，没键的就它自己一条', () => {
+  const ctx = fresh()
+  const { store } = ctx
+  const first = store.remember({ text: '他喜欢喝美式', layer: 'semantic', factKey: '他.咖啡', scope: 'gui' })
+  const second = store.remember({ text: '他改喝手冲了', layer: 'semantic', factKey: '他.咖啡', scope: 'gui' })
+  assert.ok(first?.id && second?.id)
+
+  const traced = store.lineage(second.id)
+  assert.equal(traced.key, '他.咖啡')
+  assert.equal(traced.chain.length, 2)
+  assert.equal(traced.chain[0].status, 'retired', '旧的那条应当退场')
+  assert.equal(traced.chain.at(-1).status, 'active', '新的那条还活着')
+  assert.equal(traced.chain.at(-1).id, second.id)
+
+  // 没有事实键的：只有自己一条，说明它是一次性的记录
+  const solo = store.remember({ text: '今天下了半天雨', layer: 'episodic', scope: 'gui' })
+  const one = store.lineage(solo.id)
+  assert.equal(one.key, '')
+  assert.deepEqual(one.chain.map((row) => row.id), [solo.id])
+
+  assert.equal(store.lineage('nope'), null)
+  done(ctx)
+})

@@ -50,3 +50,17 @@ test('同一个键换了说法：旧的退场、留取代链', () => {
   assert.equal(listBeliefs(ctx.db, { limit: 10 }).length, 1)
   done(ctx)
 })
+test('当面把共用层的认知改掉：改的是那一条，不并排两个版本', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  const shared = rememberBelief(ctx.db, { claim: '他叫阿甲', factKey: '他.名字', scope: 'shared' }, now)
+  const gui = rememberBelief(ctx.db, { claim: '他叫阿乙', factKey: '他.名字', scope: 'gui' }, now + 1)
+  assert.equal(gui.superseded, shared.id)
+  assert.equal(getBelief(ctx.db, shared.id).status, 'retired')
+  assert.equal(getBelief(ctx.db, gui.id).scope, 'shared', '新那条还是共用的：QQ 那边也得看见')
+  const active = ctx.db
+    .prepare("SELECT scope, claim FROM beliefs WHERE fact_key = '他.名字' AND status = 'active'")
+    .all()
+  assert.deepEqual(active.map((row) => [row.scope, row.claim]), [['shared', '他叫阿乙']])
+  done(ctx)
+})

@@ -1,3 +1,163 @@
+## 1.5.2 — 2026-11-17
+
+守岸人拿 1.5.1 跑了十八轮，交回 17 条缺陷、15 条优化建议、12 条扩展建议。
+缺陷全修了，优化做了十条，扩展挑了七条落地的。他那句总评我认：
+
+> 加维度之后，**不分档**的那部分（心情、根、人格、全库检索）成了新的漏点 ——
+> 不是写错 SQL，是忘了问这一处该不该按档。
+
+### 修（会真串人的）
+
+- **主动开口会拿到别人的记忆**：`memorySeed()` 以前从全库随机抽一条原文嵌进开场白，
+  群里说「想你了」能把 A 的私事念给 B 听。现在按当前档取，目标是谁就取谁看得见的。
+  同一处的 `qing.snapshot()` 也补了档 —— 心情是我的，但「最近那一下」不该跨人。
+- **`/seed anchor|grow|aspire|trait|habit` 不分档**：这五条改的是「我这个人」的底色
+  （根 / 我是谁 / 理想 / 特质 / 说话习惯）。以前 QQ 那边也调得动，等于谁都能改我的根。
+  现在只在你面前改得动；`/seed export` 同样只当面做。
+- **槽名归位撞主键会被静默吞掉**：`normalizeSlotTable` 用的是 `UPDATE ... WHERE slot = ?`，
+  而 `qing_history` 的主键是 `(slot, at)`，同小时两人说话就撞，`catch {}` 一吞那几行永远留在野槽名上。
+  改成 `UPDATE OR REPLACE`；失败也不再默默不动（`console.warn` 出来）。
+- **同键查重的口径不一致**：没 `factKey` 的走「只比自己那一档」，有 `factKey` 的走 `ownScopes`。
+  同一句话在共用层记过、又当面说一遍，会并排躺两条。统一成 `ownScopes`。
+- **会话映射按插入序淘汰**：Map 的 `set` 对已存在的键不改顺序，「很久没动」和「刚更新」分不出来，
+  天天用的先被挤掉。改成先 `delete` 再 `set`（LRU）。
+- **认不出的会话汇进老桶**：`scopeOfSession` 以前兜底 `'qq'`，那正是 1.5.1 刚关掉的桶。
+  改成 `qq:anon-<hash>`（FNV-1a，只用来拼档名），只归自己。
+- **`rotateLog` 改名失败会清空日志**：被占着或跨盘时以前 `writeFileSync(file, '')` ——
+  出事那天最想看的那段正好没了。改成不动它（返回 `stuck`）。
+- **两处兜底写 `shared`**：`seed_remember` 与 `importRecords` 都改成「当面」。
+  `shared` 在这套设计里特指「两人共用、谁来都看得见」，不该是「没填就落这儿」。
+- **`normalizeScope` 遇到怪值静默降级**：现在会报一声「memoryScope「X」认不出，按 qq 算」。
+
+### 优化
+
+- **删掉一条冗余索引**：`idx_affects_slot` 与唯一索引 `idx_affect_target` 列完全一样，
+  唯一索引能覆盖它，迁移时 `DROP` 掉。
+- **写入口统一常量**：`lib/scope.js` 新增 `DEFAULT_WRITE_SCOPE = 'gui'`，四个写入口都引它。
+- **`queryScores` 预筛**：白名单不超过 500 条时直接 `ref_id IN (...)`，不再捞 5000 条再在内存里滤。
+- **备份校验**：`VACUUM INTO` 之后跑一遍 `PRAGMA integrity_check`，不过就删掉那一份并报一声。
+  留一份用不了的「安全网」比没有更糟 —— 出事那天你会以为有退路。
+- **README 补「记忆分档」一节**：四档、谁能看到什么、升级后看到旧账是正常的。
+
+### 新增命令与面板
+
+- `/seed who <档>`：这一档里到底存了什么（`listExact`，只认 `scope = ?`）。
+- `/seed move <id> <档>`：把一条搬到别的档；同键的旧说法留链退场。
+- `/seed lineage <id>`：一个事实键的整条时间线（谁取代了谁）。
+- `/seed status` 多一行「撞车 N 条」：同一个键在多个档里各留一份时提醒你。
+- `/seed compat import` 能带档位（默认「当面」）。
+- 面板记忆列表加了档位徽章（共用 / 当面 / QQ x / 群 x）。
+- 习惯的 `meta.learnedIn` 记「这条是在谁面前学到的」（只记录，不参与匹配）。
+
+### 没做
+
+- 按档分心情、按档分人格与说话习惯 —— 不做。心情是我一个人的体温，拆开等于把一个人拆成几个。
+- 给 QQ 侧重新开放老桶 `qq` —— 不做。1.5.1 刚关掉。
+- 按档清理、群聊时间线、语义索引分空间 —— 复杂度高、收益不明，留给以后。
+
+## 1.5.1 — 2026-11-17
+
+这一版是给 1.5.0 收口的：守岸人又拿 1.5.0 跑了八轮（造局、看输出、再下结论），拎出 16 条。
+重的四条我全认：**唯一索引没迁移**、**重启后认不出会话是谁的**、**老桶谁都能读**、**当面改不了共用层**。
+其余十二条顺手一起收了，另外把他那种「先实测再说话」的验法搬成了 `test/review/` 的 24 项。
+
+### 修（会真串人、真丢数据的）
+
+- **`affects` 的唯一索引没跟着迁移**：老库留下的是 `UNIQUE(target, kind)`，而 v13 用的是
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_affect_target` —— SQLite 只认名字，见到同名就当建好了，
+  于是「一人一份账」在除 `gui` 之外的每一档上都整体失效（实测 `UNIQUE constraint failed: affects.target, affects.kind`）。
+  现在按**索引形状**判：名字对、列对、`UNIQUE` 也对，缺一样就 DROP 再建。索引也统一交给 `INDEX_SHAPES` 一张表管。
+- **QQ 会话 id 里缝着号**：以前是 `seedqq-<sha1 前 16>`，哈希不含号、也不可逆；通道的 `scopes` 只活在内存里，
+  一重启 Map 一空，旧会话就全落回老桶 `qq`。现在 id 是 `seedqq-<hash16>-q10001`（群 `-g20002`），
+  `scopeOf()` 按「内存 → 账本反查 → id 后缀」三道取，宿主把会话恢复成裸 id 也认得出。
+  解析统一放在 `lib/scope.js` 的 `scopeOfSessionId`，通道、命令、面板用的是同一份。
+- **老桶 `qq` 不再对 QQ 侧可见**：它混着 1.4.x 时代好几个人的话，谁读都是串。现在只有「当面/面板」还看得见它
+  （本人的地方看自己的旧账不过分），任何一个私聊、任何一个群都读不到。数据一条没删、没挪。
+- **当面改不掉共用层**：`ownScopes('gui')` 现在是 `['gui', 'shared']`，同键撞上 `shared` 时**改的就是那一条**，
+  而且留在 `shared`——不会「当面」把共用的约定降级成只有自己看得见，也不会并列出现「阿甲」「阿乙」两个版本。
+
+### 修（其余十二条）
+
+- `/seed` 命令以前没有会话上下文：搜索/打开是全库、记住是写 `shared`。现在 `handler(invocation)` 拿得到 `agent`，
+  `scope` 一路穿透到卡片、搜索、`open`/`why`/`keep`/`forget`、`remember`、`believe`、`mood`、`feel`；
+  老宿主的 `execute(line)` 按「当面」算，不再悄悄写进共用层。
+- 面板 `POST /remember` 不传 scope 时落 `gui`（和「面板上补一条」的语义一致），要写共用层得明说。
+- 面板 `panelState()` 的卡片、`/seed status` 的卡片都按「当面」取，不再是 `shared`。
+- `mountCard` 里的 `qing.snapshot()` 传当前档：卡片上那句「最近那一下」只说该说的那个人的事。
+- `resolveMemory` 按可见性取，`seed_forget` 也删不了自己看不见的东西。
+- `qing_history` 的槽名 `me` / `local` / `panel` 之类在迁移时归到 `gui`（以前只判「有没有 slot 列」，
+  打过别人补丁的库会整条曲线断掉且无声）。
+- `store.card` / `store.list` / `seed_search` 的 scope 都是「传了才过滤」，不传的老调用方行为不变。
+- `canonScope` 容忍 `private: 123` / `qq: 123` / `group: 123` 这种带空格的写法，不再静默落进野档。
+- `addColumnIfMissing` 表不在就跳过（不再是 `no such table` 直接炸）。
+- `idx_belief_scope` 与 `idx_beliefs_scope` 重复的那一个删掉了。
+- 老 `emotions` / `captures` 在「刚加 slot 列」的那一次迁移里挪进老桶 `qq`——它们是 1.4.x 混着写的，
+  摊成 `shared` 才叫串人。
+- `test\db.test.mjs` 里手搓残表的用例改成先建整库再降版本号，另加三条（唯一索引形状、`me` 槽归 `gui`、老行进 `qq` 桶）。
+
+### 测试
+
+- 新增：`/seed` 跟着会话走（别人私聊里记的事，别人搜不到）、面板补记默认 `不是 shared`。
+- `test/review/19-per-user.mjs` 跟着新语义改（`qq:<号>` 只看得见 `shared` + 自己）。
+- 全量 **420 项通过**（另有审查包搬过来的 24 项）。
+
+## 1.5.0 — 2026-11-17
+
+这一版只做一件事：**分人**。以前 Scope 只有 `shared / gui / qq` 三档，群聊和私聊、这个人和那个人，
+全都写进同一个 `qq` 桶里；别人的话会顶掉你的记忆，你的账也会被别人的一句「你真好」改掉。
+现在每一档都分开了，而且不是贴一层补丁——从库里到搜索到卡片到情绪，一条管道铺到底。
+
+### 分人
+
+- **scope 词表**：`shared`（两人共用）、`gui`（当面）、`qq:<QQ号>`（某个人的私聊）、`group:<群号>`（某个群）。
+  老 `qq` 留作兼容桶（1.5.1 起只有「当面/面板」还看得见它，见上）。
+- **新文件 `lib/scope.js`**：`canonScope` / `visibleScopes` / `scopeFilter` / `ownScopes` / `scopeOfPeer` /
+  `peerOfScope` / `scopeLabel`。可见性一律走 `scopeFilter()`，写一律写自己那一档；别的文件不再手拼字符串。
+- **记忆（store）**：搜索、卡片、列表都按可见性取（共用 + 自己 + 老桶）；同键撞车只在自己那一档里算——
+  他说的「他养猫」和 QQ 上某人说的「他养猫」是两码事，私聊里的人改不了两人共用的约定。
+- **信念（beliefs）**：加 `scope`，同键合并/接管/冲突判定都在同一档内。
+- **待记（captures）**：加 `slot`，去重、淘汰、匹配、采纳全都只在自己那一档里算；
+  别人说的话不会跑到我的待记里，采纳后也记在他自己名下。
+- **情绪账（emotions / affects）**：加 `slot`。别人惹我不高兴，不会改到我对他的信任。
+  心情本身（`mood` / `qing_state`）还是**我一个人的体温**，不分人。
+- **情绪内核（qing）**：`qing_history` 改成按 `(slot, at)` 存；「连着骂」的判定按人算——
+  张三骂我两句、他说一句，不再被算成连着第三句压成六成。
+- **导出入（compat）**：`importRecords` 不再硬写 `shared`，`exportSnapshot` 也按档取。
+- **工具**：`seed_remember` 不填 scope 就跟着当前会话走（不再默认塞进共用层）；
+  `seed_search` 只搜看得见的，语义补候选也先按可见 id 预筛，不再全库算一遍；
+  `seed_inspect` 的心情/情感取当前这一档。
+- **QQ**：私聊落 `qq:<号>`、群聊落 `group:<群号>`；群聊每轮带上「这一轮是谁在说」，
+  不再把张三的话当成老大说的。面板（管理面）全列，但每条标清是谁的。
+
+### 库
+
+- **schema v13**：补五个索引。顺带解掉一个老账——记忆卡按 `importance DESC, recorded_at DESC` 排序
+  以前走不到索引，现在有 `(scope, layer, status, importance DESC, recorded_at DESC)`。
+- **迁移重做**：整段包进 `SAVEPOINT`；先跑一遍「容错建表建索引」，再逐列补齐（表不在就跳过，不再是
+  `no such table` 直接炸），再重建 `qing_history`，最后**无容错**再跑一遍；`user_version` 只往前推。
+  这样别人把版本号推到 17 也不会整段跳过，缺的列照样补。
+- 旧数据：`emotions` / `captures` 归 `shared`，关系账归 `gui`，`qing_history` 的老点归 `gui`。
+
+### 修（上一轮审查报告里的）
+
+- 巩固（consolidate）用裸 `BEGIN`，在外层已有事务时会抛「cannot start a transaction within a transaction」，
+  整批静默失败；改成 `SAVEPOINT`，回滚也只回滚自己这一段。
+- 群聊复盘每句都冠「老大」，把群里别人说的话写成了老大说的。
+- QQ 指令（「放她进来」这类）只活在内存里，一重启安全门就失准；现在存盘，活过重启。
+- `stop()` 会静默丢掉还在等的那条消息，`waiters` 的定时器也不清；现在先记账再收摊。
+- `[图片] <路径>` 那行以前直接 `readFileSync`，手打一行就能让我读任意文件；现在只认图片后缀。
+- 心情卡读根页面失败会整张塌掉；`currentMood` 末句在坏表上会抛；两处都兜住了。
+- 消息交给宿主的 `source` 以前只有 `kind:'user'`，面板和别的插件看不出是谁说的；现在带 `platform / scope / peerId / userId / senderName / groupId / fromMe`。
+- `recentEmotions` / `affectLine` 在坏表上会抛（一条是面板、一条是注入链），改成给空的。
+
+### 测试
+
+- 审查包里那 24 个脚本搬进 `test/review/`（一个脚本一个文件，`node test\review\run.mjs` 跑全部 24 项），
+  问的还是「分人之后有没有串」；我故意做的不一样的（心情一份身体、群档按群不按人）按我的语义断言，
+  差异写在 `test/review/差异清单.md`。
+
+全量 **412 项通过**（另有审查包搬过来的 24 项）。
+
 ## 1.4.17 — 2026-11-17
 
 ### 修

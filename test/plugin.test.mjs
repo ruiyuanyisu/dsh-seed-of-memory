@@ -756,3 +756,84 @@ test('未完话头：记一条、列出来、收掉', async () => {
     env.cleanup()
   }
 })
+
+test('/seed 命令知道自己在谁的会话里：记的事写在他自己那一档', async () => {
+  const env = makeEnv()
+  try {
+    apply(env.ctx, { budget: 600 })
+    const seed = env.commands[0]
+    assert.ok(seed, '没注册 /seed')
+    assert.equal(typeof seed.handler, 'function', '新宿主走 handler(invocation)，得带会话上下文')
+
+    const mine = { session: { id: 'seedqq-0123456789abcdef-q10001' } }
+    const stranger = { session: { id: 'seedqq-0123456789abcdef-q20002' } }
+    const panel = { session: { id: 'session-gui-1' } }
+
+    const wrote = await seed.handler({ rawInput: 'remember 他说周三要去医院复查', agent: mine })
+    assert.equal(wrote.kind, 'success', JSON.stringify(wrote))
+    assert.match(wrote.text, /已记住/)
+
+    const byName = Object.fromEntries(env.tools.map((tool) => [tool.name, tool]))
+    // 工具返回的可能是字符串，也可能是 { text }（宿主包装过），统一取文字。
+    const asText = (value) => (typeof value === 'string' ? value : String(value?.text ?? ''))
+    const own = asText(await byName.seed_search.execute({ q: '医院' }, { agent: mine }))
+    assert.match(own, /周三要去医院复查/, '自己那一档里该搜得到')
+
+    const other = asText(await byName.seed_search.execute({ q: '医院' }, { agent: stranger }))
+    assert.doesNotMatch(other, /周三要去医院复查/, '别人的私聊里不该搜到')
+
+    // 面板（当面）是另一档，但「当面」看得见共用层；这条是人家私聊里的，看不见。
+    const gui = asText(await byName.seed_search.execute({ q: '医院' }, { agent: panel }))
+    assert.doesNotMatch(gui, /周三要去医院复查/)
+
+    // 没有会话的旧路径（老宿主的 execute(line)）按「当面」算，不能写进 shared。
+    const legacy = await seed.execute('remember 面板上说的这句')
+    assert.equal(legacy.kind, 'success')
+    const atGui = asText(await byName.seed_search.execute({ q: '面板上说的这句' }, { agent: panel }))
+    assert.match(atGui, /面板上说的这句/)
+    const leak = asText(await byName.seed_search.execute({ q: '面板上说的这句' }, { agent: stranger }))
+    assert.doesNotMatch(leak, /面板上说的这句/, '当面记的不该漏进 QQ 的档')
+  } finally {
+    env.cleanup()
+  }
+})
+
+test('面板上补记一条：默认记在「当面」，不写进共用层漏给所有 QQ 会话', async () => {
+  const env = makeEnv()
+  apply(env.ctx, { budget: 600 })
+  try {
+    const route = env.routes.find((entry) => entry.path === '/dsh-seed-of-memory/remember')
+    assert.ok(route, '没注册 /remember')
+    const post = (body) =>
+      new Promise((resolve) => {
+        const req = new EventEmitter()
+        req.method = 'POST'
+        const res = {
+          writableEnded: false,
+          writeHead(status) {
+            this.status = status
+          },
+          end(text) {
+            this.body = String(text)
+            this.writableEnded = true
+            resolve(this)
+          },
+        }
+        route.handler(req, res)
+        req.emit('data', Buffer.from(JSON.stringify(body), 'utf8'))
+        req.emit('end')
+      })
+
+    const saved = await post({ text: '面板上补的一句话' })
+    assert.equal(JSON.parse(saved.body).ok, true, saved.body)
+
+    const byName = Object.fromEntries(env.tools.map((tool) => [tool.name, tool]))
+    const asText = (value) => (typeof value === 'string' ? value : String(value?.text ?? ''))
+    const panel = asText(await byName.seed_search.execute({ q: '面板上补的一句话' }, { agent: { session: { id: 'session-gui-1' } } }))
+    assert.match(panel, /面板上补的一句话/)
+    const qq = asText(await byName.seed_search.execute({ q: '面板上补的一句话' }, { agent: { session: { id: 'seedqq-0123456789abcdef-q10001' } } }))
+    assert.doesNotMatch(qq, /面板上补的一句话/)
+  } finally {
+    env.cleanup()
+  }
+})

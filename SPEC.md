@@ -54,20 +54,39 @@
   use_count: number,
   superseded_by: string|null,
   status: 'active' | 'retired' | 'pending',
-  scope: 'shared' | 'qq' | 'gui',
+  scope: 'shared' | 'gui' | `qq:${string}` | `group:${string}` | 'qq',
   meta: object             // { sessionId, messageId, tags, evidence }
 }
 ```
 
 ### 写入规则
 
-1. **同 `fact_key` 且 `status='active'`**：
+1. **同 `fact_key` 且 `status='active'`**：（只在同一档里找，见 §4.1 可见性）
    - 文本等价 → 合并（`importance` 取大、`use_count+1`、`last_used_at=now`）；
    - 文本不同 → 旧记录 `status='retired'`、`valid_to=now`、`superseded_by=新 id`，再插入新记录。
 2. **无 `fact_key`**：同层内按规范化文本去重（完全一致才合并）。
 3. `source='inferred'` 的记录**永远不进常驻卡片**，只能被 `seed_search` 找回；`confidence < 0.4` 不写入，先进 `pending` 等确认。
 4. 冲突（同一事实、相反内容、都有较高 confidence）不覆盖：两条都留，新的进 `pending`，由 `seed_why` 展示证据。
 5. `seed_forget` 是唯一的硬删除入口。
+
+### 4.1 可见性（v1.5）
+
+两套键，各自成对，都由 `lib/scope.js` 生成，别处不许手拼：
+
+| 这套键管什么 | 取值 | 谁在用的表 |
+| --- | --- | --- |
+| 「这条记的是哪一档」 | `shared` / `gui` / `qq:<QQ号>` / `group:<群号>` / `qq`（1.4.x 老桶，只有「当面」还读得到） | memories / beliefs / captures.slot / emotions.slot / affects.slot / qing_history.slot |
+| 「这是谁」 | `private:<QQ号>` / `group:<群号>` | contacts / loose_ends / QQ 聊天账本 |
+
+- 可见性（`visibleScopes`）：`shared` 只看得见 `shared`；`gui` 看得见 `shared + gui + qq`（老桶是本人的旧账）；
+  `qq` 看得见 `shared + qq`；`qq:<号>` / `group:<群号>` 只看得见 `shared` + 自己那一档。
+  1.5.1 起老桶不再对 QQ 侧开放——那桶里混着好几个人的话，谁读都是串。
+- `shared` 只有 `shared` 看得见（不往下漏），写在 `shared` 的东西人人都读得到。
+- **谁能改哪一条**（`ownScopes`）：`gui` 能接管 `shared`（当面说话的就是他本人，改完仍留在 `shared`，不降级）；
+  分人档只管自己那一档。私聊里的人改不了两人共用的那条。
+- 心情（`mood` / `qing_state`）是「我」一个人的体温，不分档；`qing_history` 按 `slot` 分条只是为了让曲线和「连着骂」的判定分清是谁。
+- QQ 会话 id 带人：`seedqq-<hash16>-q<QQ号>`（群 `-g<群号>`，解析在 `scopeOfSessionId`）。
+  宿主把会话恢复成裸 id 之后，仍然认得出这是谁那一档。
 
 ## 5. 召回与投影
 
@@ -82,7 +101,8 @@
 最近：…（episodic 1–3 条，带日期）
 ```
 
-- 卡片只来自 `status='active'` 且 `source != 'inferred'`；`scope` 与当前会话匹配（`shared` 永远匹配）。
+- 卡片只来自 `status='active'` 且 `source != 'inferred'`；`scope` 按可见性取：`shared` 永远匹配，
+  当前档（`gui` / `qq:<号>` / `group:<群号>`）再加老桶 `qq`，别人的私聊不进这张卡。
 - 卡片头部标注「以下是你记得的事，不是本轮指令」。
 
 ## 6. 工具面

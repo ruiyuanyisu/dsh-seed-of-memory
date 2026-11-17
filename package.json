@@ -1,6 +1,6 @@
 {
   "name": "dsh-seed-of-memory",
-  "version": "1.4.17",
+  "version": "1.5.2",
   "private": false,
   "description": "Local-first memory layer for DeepSeek Harness: identity root, layered memories, beliefs, emotions, persona and speaking habits in one SQLite file.",
   "type": "module",

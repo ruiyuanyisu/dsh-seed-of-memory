@@ -195,3 +195,25 @@ test('affects: decay pulls a moved value back toward its base', () => {
     assert.ok(trust.strength < 0.75 && trust.strength > AFFECT_BASE['信任'])
   })
 })
+
+test('emotions/affects are per-slot: 别人惹我不高兴，不该动到我对老大的信任', () => {
+  withDb((db) => {
+    const annoyed = {
+      cause: 'QQ 上那个人一直催',
+      appraisal: { relevance: 0.9, congruence: -0.9, certainty: 0.9, control: 0.2, agency: 'other', novelty: 0.1 },
+    }
+    for (let i = 0; i < 10; i += 1) recordEmotion(db, { ...annoyed, slot: 'qq:10001' }, Date.now() + i)
+
+    const trustGui = listAffects(db).find((row) => row.kind === '信任')
+    const trustHis = listAffects(db, { slot: 'qq:10001' }).find((row) => row.kind === '信任')
+    assert.equal(trustGui.strength, AFFECT_BASE['信任'], '对老大的信任不该被别人的事拖下去')
+    assert.ok(trustHis.strength < AFFECT_BASE['信任'], '对他自己那份账该降')
+
+    // 情绪条目也分档：当面看不见 QQ 上那条
+    assert.equal(recentEmotions(db, 20, 'gui').length, 0)
+    assert.equal(recentEmotions(db, 20, 'qq:10001').length, 10)
+    assert.equal(recentEmotions(db, 20, 'qq:20002').length, 0)
+    // 心情是我一个人的：不管谁惹的，它都动
+    assert.ok(currentMood(db).line.length > 0 || currentMood(db).valence < BASELINE.valence)
+  })
+})

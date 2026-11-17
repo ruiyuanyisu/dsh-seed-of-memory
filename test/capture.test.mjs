@@ -164,3 +164,35 @@ test('说别记的，就真的别进待记', () => {
     assert.equal(extractCandidates('记得提醒我周末去山里').length, 1)
   })
 })
+
+test('待记也分人：别人说的话不会跑到我的待记里，采纳后也记在他自己名下', () => {
+  withDb((db, store) => {
+    addCapture(db, { text: '张三说他在厂里上夜班，白天睡觉', cue: 'habit', slot: 'qq:10001' })
+    addCapture(db, { text: '我们约好寒假回老家一趟', cue: 'agreement', slot: 'shared' })
+    addCapture(db, { text: '我这两天在改那个记忆插件的代码', cue: 'habit', slot: 'gui' })
+
+    // 当面：只看得见自己那一档 + 共用的
+    const gui = captureLine(db, { slot: 'gui', max: 9 })
+    assert.ok(gui.includes('我这两天在改'), '自己的要看得见')
+    assert.ok(gui.includes('我们约好寒假'), '共用的要看得见')
+    assert.ok(!gui.includes('张三说他在厂里'), '别人的不该冒到当面来')
+
+    // 张三自己：只看得见自己那一档 + 共用的
+    const his = captureLine(db, { slot: 'qq:10001', max: 9 })
+    assert.ok(his.includes('张三说他在厂里'))
+    assert.ok(his.includes('我们约好寒假'))
+    assert.ok(!his.includes('我这两天在改'), '当面的事不该漏给 QQ')
+
+    // 另一个 QQ 号：两条私事都看不见
+    const stranger = captureLine(db, { slot: 'qq:20002', max: 9 })
+    assert.ok(stranger.includes('我们约好寒假'))
+    assert.ok(!stranger.includes('张三说他在厂里'))
+    assert.ok(!stranger.includes('我这两天在改'))
+
+    // 采纳「张三」那条：写在张三名下，不是 shared
+    const row = listCaptures(db, { slot: 'qq:10001', limit: 9 }).find((r) => r.text.includes('张三说他在厂里'))
+    const memory = acceptCapture(db, store, row.id)
+    assert.equal(store.get(memory.id).scope, 'qq:10001')
+    assert.equal(captureStats(db, { slot: 'gui' }).pending, 2, '被采纳那条不该再算进当面的待记')
+  })
+})

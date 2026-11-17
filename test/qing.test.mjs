@@ -107,6 +107,22 @@ test('连着夸：第三句多给三成；连着骂：第三句只算六成', ()
   })
 })
 
+test('连着骂的计数分人：张三骂两句，老大说一句不算第三句', () => {
+  withDb((db) => {
+    const qing = new Qing(db)
+    const t = Date.now()
+    qing.observe('你是垃圾', t, { slot: 'qq:10001' })
+    qing.observe('真是个废物', t + 1000, { slot: 'qq:10001' })
+    // 换一个人来骂：他自己是第一次，不该被前面那两句压成六成
+    assert.equal(qing.observe('蠢东西', t + 2000, { slot: 'gui' }).factor, 1)
+    // 同一个人继续骂：这才是第三句
+    assert.equal(qing.observe('废物', t + 3000, { slot: 'qq:10001' }).factor, 0.6)
+
+    // 心情是一个人的：不管谁骂的，账都记在我身上
+    assert.ok(qing.snapshot(t + 4000).mood < 50)
+  })
+})
+
 test('时间会冲淡：各维度按各自速率回常态', () => {
   const now = Date.now()
   const rates = {
@@ -334,5 +350,21 @@ test('出事的时候只说心里堵，不乱下「是自己弄坏的」这种�
     const line = qing.line()
     assert.ok(!line.includes('弄坏'), line)
     assert.match(line, /心里欠着|委屈|出了事/)
+  })
+})
+
+test('卡片上那句「最近那一下」只说该说的那个人的事', () => {
+  withDb((db) => {
+    const qing = new Qing(db)
+    const t = Date.now()
+    qing.observe('你是垃圾', t, { slot: 'qq:10001' })
+    const gui = qing.snapshot(t + 1000, 'gui')
+    assert.doesNotMatch(gui.line, /最近那一下/, '别人惹我的事不该挂在给你的卡片上')
+    assert.equal(gui.recent.length, 0)
+    const qq = qing.snapshot(t + 1000, 'qq:10001')
+    assert.match(qq.line, /最近那一下/)
+    assert.ok(qq.recent.every((e) => e.slot === 'qq:10001'))
+    // 心情还是一个身体：不管谁惹的，账单都在我身上
+    assert.ok(gui.mood < 50)
   })
 })

@@ -185,3 +185,22 @@ test('reindex 有刹车：轮数用光就先返回，remaining 如实报', async
     assert.equal(partial.rounds, 1)
   })
 })
+
+test('queryScores 只在给的那一档里挑：别的档看得见也不该拿来算', async () => {
+  await withDb(async ({ db, store }) => {
+    const mine = store.remember({ text: '她怕冷', layer: 'semantic', scope: 'qq:10001' })
+    const other = store.remember({ text: '冬天手脚冰凉', layer: 'episodic', scope: 'qq:20002' })
+    const index = new SemanticIndex(db, fakeEmbedder(), { space: 'fake@4-v1', dimension: 4 })
+    await index.backfill({ batch: 8 })
+
+    const all = await index.queryScores('怕冷')
+    assert.ok(all.size >= 2, '不限定的时候还是全库挑')
+
+    const onlyMine = await index.queryScores('怕冷', { ids: [mine.id] })
+    assert.ok(onlyMine.has(mine.id))
+    assert.ok(!onlyMine.has(other.id), '别人那一档的向量不该算进来')
+
+    const none = await index.queryScores('怕冷', { ids: [] })
+    assert.equal(none, null, '一条都看不见就别白算了')
+  })
+})
