@@ -123,3 +123,13 @@ test('通道拿到手写的怪配置时，行为按收好的算（白名单字�
   off.stop()
   assert.ok(offKinds.includes('observe'), 'autoReply="false" 应当是只听不回：' + offKinds.join(','))
 })
+test('手改 qq.json：语音那档写成 true/false/ask 也认得', () => {
+  assert.equal(normalizeQqConfig({ voiceOut: false }).voiceOut, 'off')
+  assert.equal(normalizeQqConfig({ voiceOut: true }).voiceOut, 'always')
+  assert.equal(normalizeQqConfig({ voiceOut: 'on' }).voiceOut, 'always')
+  assert.equal(normalizeQqConfig({ voiceOut: 'ask' }).voiceOut, 'manual')
+  assert.equal(normalizeQqConfig({ voiceOut: 'MANUAL' }).voiceOut, 'manual')
+  // 认不出来的一律当 auto —— 不能因为一个怪值就变成每句都说
+  assert.equal(normalizeQqConfig({ voiceOut: '随便写' }).voiceOut, 'auto')
+  assert.equal(normalizeQqConfig({ voiceOut: '' }).voiceOut, 'auto')
+})

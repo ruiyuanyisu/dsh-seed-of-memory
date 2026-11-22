@@ -204,3 +204,21 @@ test('queryScores 只在给的那一档里挑：别的档看得见也不该拿�
     assert.equal(none, null, '一条都看不见就别白算了')
   })
 })
+
+test('存疑的认知不进索引：统计只算 active，补索引也不会捞它', async () => {
+  await withDb(async ({ db }) => {
+    const insert = db.prepare(
+      `INSERT INTO beliefs (id, claim, norm, fact_key, confidence, sensitivity, evidence, source, scope, status, superseded_by, created_at, updated_at)
+       VALUES (?, ?, ?, NULL, 0.8, 0.5, '[]', 'user-said', 'gui', ?, NULL, ?, ?)`,
+    )
+    const now = Date.now()
+    insert.run('b_keep', '他喜欢夜里听雨', '他喜欢夜里听雨', 'active', now, now)
+    insert.run('b_doubt', '他讨厌被夸', '他讨厌被夸', 'contested', now, now)
+
+    const index = new SemanticIndex(db, fakeEmbedder(), { space: 'fake@4-v1', dimension: 4 })
+    const beliefStats = index.typeStats().find((row) => row.type === 'belief')
+    assert.equal(beliefStats.total, 1, '存疑的不该算进「该索引」的总数')
+    const queued = index.pending({ limit: 10, type: 'belief' }).map((row) => row.id)
+    assert.deepEqual(queued, ['b_keep'])
+  })
+})

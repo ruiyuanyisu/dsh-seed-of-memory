@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -950,3 +951,53 @@ test('/seed mute：记着但先别提，search 仍查得到，off 能收回来',
   }
 })
 
+
+test('seed_believe / seed_feel 跟着会话走：群里写下的东西，不会跑到当面', async () => {
+  const env = makeEnv()
+  try {
+    apply(env.ctx, { budget: 600 })
+    const byName = {}
+    for (const definition of env.tools) byName[definition.name] = definition
+    const qq = { agent: { session: { id: 'seedqq-0123456789abcdef-q10001' } } }
+    const gui = { agent: { session: { id: 'session-gui-1' } } }
+
+    const asText = (value) => (typeof value === 'string' ? value : String(value?.text ?? ''))
+    await byName.seed_believe.execute({ claim: '他觉得群里不必句句解释' }, qq)
+    await byName.seed_believe.execute({ claim: '他喜欢夜里听雨' }, gui)
+
+    const db = new DatabaseSync(join(env.home, 'seed-of-memory', 'seed.db'), { readOnly: true })
+    try {
+      const rows = db.prepare('SELECT claim, scope FROM beliefs ORDER BY created_at').all()
+      const mine = rows.find((row) => row.claim === '他觉得群里不必句句解释')
+      const shared = rows.find((row) => row.claim === '他喜欢夜里听雨')
+      assert.equal(mine.scope, 'qq:10001', '群里写下的认知应该落在本人那一档')
+      assert.equal(shared.scope, 'gui', '当面写下的认知落在当面，不该默认 shared')
+
+      await byName.seed_feel.execute({ cause: '群里有人夸我', relevance: 0.6, congruence: 0.5 }, qq)
+      await byName.seed_feel.execute({ cause: '他今天很温柔', relevance: 0.9, congruence: 0.8 }, gui)
+      const slots = db.prepare('SELECT cause, slot FROM emotions ORDER BY created_at').all()
+      assert.equal(slots.find((row) => row.cause === '群里有人夸我').slot, 'qq:10001')
+      assert.equal(slots.find((row) => row.cause === '他今天很温柔').slot, 'gui')
+    } finally {
+      db.close()
+    }
+  } finally {
+    env.cleanup()
+  }
+})
+
+
+test('/seed believe 不带内容时，把心里的判断列出来', async () => {
+  const env = makeEnv()
+  try {
+    apply(env.ctx, { budget: 600 })
+    const cmd = env.commands[0]
+    const gui = { agent: { session: { id: 'session-gui-1' } } }
+    await cmd.handler({ rawInput: 'believe 他不喜欢被催', agent: gui.agent })
+    const listed = await cmd.handler({ rawInput: 'believe', agent: gui.agent })
+    assert.match(listed.text, /他不喜欢被催/)
+    assert.match(listed.text, /会慢慢淡下去/)
+  } finally {
+    env.cleanup()
+  }
+})

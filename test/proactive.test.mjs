@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { planProactive, proactiveText, inQuietHours, ownerTarget, normalizeOwnerQQ, PROACTIVE_DEFAULTS } from '../lib/qq/proactive.js'
+import { planProactive, proactiveText, inQuietHours, ownerTarget, normalizeOwnerQQ, PROACTIVE_DEFAULTS, cleanSeed, similarity, isRepeat, composeProactive, composeCandidates } from '../lib/qq/proactive.js'
 
 const NOON = new Date(2026, 10, 13, 14, 0, 0).getTime()
 const hourAgo = (h) => NOON - h * 3_600_000
@@ -142,11 +142,41 @@ test('文案带一点具体的事，且四种都不一样', () => {
 })
 
 test('长记忆不硬切在句子中间，也不出现「…。。」', () => {
-  const memory = 'D:\\work 盘是 exFAT（THUNDEROBOT USB 确认），所以他一直想换一块更稳的盘，但暂时不想折腾。'
+  const memory = '他说周末想去山里走走，最好是那种没有信号的地方，手机扔在包里一整天都别响。'
   const text = proactiveText('miss', { memory })
   assert.ok(text.includes('…'))
   assert.doesNotMatch(text, /…。/)
 })
+
+test('引子先洗干净：日期、代码路径、命令都不说出口', () => {
+  assert.equal(cleanSeed('2026-11-13 Seed of Memory 1.0.0 正式发布'), 'Seed of Memory 1.0.0 正式发布')
+  assert.equal(cleanSeed('他说：周末想去山里'), '周末想去山里')
+  assert.equal(cleanSeed('E:\\Carys 盘是 exFAT'), '')
+  assert.equal(cleanSeed('api_v2.py 加 _carys_trim_silence'), '')
+  assert.equal(cleanSeed('npm publish 走 registry'), '')
+  assert.equal(cleanSeed('   '), '')
+  // 洗不干净时也只说一句普通的，不把代码念出来
+  const text = proactiveText('miss', { memory: 'lib/index.js 里 proactiveTick 改了' })
+  assert.doesNotMatch(text, /lib\/index\.js|proactiveTick/)
+})
+
+test('同一类话有六种说法：不会每次一个腔调', () => {
+  const seen = new Set()
+  for (let salt = 0; salt < 6; salt++) seen.add(proactiveText('miss', { salt }))
+  assert.equal(seen.size, 6)
+})
+
+test('像到什么程度算重复：同一个意思换个字也算', () => {
+  assert.equal(similarity('有点想你。', '有点想你。'), 1)
+  assert.ok(similarity('有点想你，。', '有点想你。') > 0.9)
+  assert.ok(similarity('有点想你。', '今天心情不错。') < 0.2)
+  const recent = [{ at: 1_000, text: '有点想你。没什么事。' }]
+  assert.equal(isRepeat('有点想你。没什么事！', recent, { now: 2_000 }), true)
+  assert.equal(isRepeat('今天心情不错。', recent, { now: 2_000 }), false)
+  // 超过 24 小时的不算
+  assert.equal(isRepeat('有点想你。没什么事。', recent, { now: 1_000 + 25 * 3_600_000 }), false)
+})
+
 
 test('主人 QQ 优先，没填才用自定义对象', () => {  assert.equal(ownerTarget({ ownerQQ: '100000001' }), 'private:100000001')
   assert.equal(ownerTarget({ ownerQQ: ' 100000001 ', target: 'group:123456' }), 'private:100000001')
@@ -164,3 +194,56 @@ test('QQ 号里的空格、横线会被滤掉，太短或太长当没填', () =>
   assert.equal(normalizeOwnerQQ(null), '')
 })
 
+
+test('连着两次不说同一句：第二次换说法', () => {
+  const first = composeProactive({ kind: 'miss', salt: 0, now: 1_000, pickSeed: () => '' })
+  assert.ok(first.text)
+  const recent = [{ at: 1_000, text: first.text, seed: first.seed }]
+  const second = composeProactive({ kind: 'miss', salt: 0, now: 2_000, recent, pickSeed: () => '' })
+  assert.ok(second.text, '还有别的说法就该说出口')
+  assert.notEqual(second.text, first.text)
+  assert.ok(similarity(second.text, first.text) < 0.8)
+})
+
+test('六种说法全说过了：这一轮干脆不说', () => {
+  const said = []
+  for (let salt = 0; salt < 6; salt++) said.push({ at: 1_000, text: proactiveText('lonely', { salt }), seed: '' })
+  const again = composeProactive({ kind: 'lonely', salt: 0, now: 2_000, recent: said, pickSeed: () => '' })
+  assert.equal(again.text, '')
+})
+
+test('引子用过就不再拎：挑引子的人看得到「已经用过的」', () => {
+  const seen = []
+  const out = composeProactive({
+    kind: 'miss',
+    salt: 0,
+    now: 1_000,
+    recent: [{ at: 900, text: '不一样的一句', seed: '旧的引子' }],
+    pickSeed: (used) => {
+      seen.push([...used])
+      return '新的引子'
+    },
+  })
+  assert.deepEqual(seen[0], ['旧的引子'])
+  assert.match(out.text, /新的引子/)
+})
+
+test('候选带着引子的来历：什么时候记的、在哪一档', () => {
+  const list = composeCandidates({
+    kind: 'miss',
+    salt: 0,
+    now: 1_000,
+    attempts: 2,
+    pickSeed: () => ({ text: '他答应寒假回家讲故事', at: 12_345, scope: 'gui' }),
+  })
+  assert.ok(list.length >= 1)
+  assert.equal(list[0].seed, '他答应寒假回家讲故事')
+  assert.equal(list[0].seedAt, 12_345)
+  assert.equal(list[0].seedScope, 'gui')
+})
+
+test('候选里不会有两句一模一样的', () => {
+  const list = composeCandidates({ kind: 'miss', salt: 0, now: 1_000, attempts: 6, pickSeed: () => '' })
+  const texts = list.map((row) => row.text)
+  assert.equal(new Set(texts).size, texts.length)
+})

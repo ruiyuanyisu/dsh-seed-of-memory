@@ -4,7 +4,14 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDatabase } from '../lib/db.js'
-import { rememberBelief, listBeliefs, getBelief } from '../lib/beliefs.js'
+import {
+  BELIEF_CONFIDENCE_FLOOR,
+  effectiveConfidence,
+  getBelief,
+  listBeliefs,
+  rememberBelief,
+  setBeliefStatus,
+} from '../lib/beliefs.js'
 
 function fresh() {
   const dir = mkdtempSync(join(tmpdir(), 'seed-belief-'))
@@ -62,5 +69,56 @@ test('当面把共用层的认知改掉：改的是那一条，不并排两个�
     .prepare("SELECT scope, claim FROM beliefs WHERE fact_key = '他.名字' AND status = 'active'")
     .all()
   assert.deepEqual(active.map((row) => [row.scope, row.claim]), [['shared', '他叫阿乙']])
+  done(ctx)
+})
+
+test('同一条认知说五遍，置信度封在 0.95：重复不等于越来越确信', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  let last = null
+  for (let i = 0; i < 5; i += 1) {
+    last = rememberBelief(ctx.db, { claim: '他不喜欢被催', confidence: 0.99 }, now + i)
+  }
+  assert.equal(getBelief(ctx.db, last.id).confidence, 0.95)
+  done(ctx)
+})
+
+test('九十天没人再印证，认知会淡：半衰期九十天，淡到底也不归零', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  const r = rememberBelief(ctx.db, { claim: '他不喜欢被催', confidence: 0.9 }, now)
+  const row = getBelief(ctx.db, r.id)
+  const today = effectiveConfidence(row, now)
+  assert.ok(today > 0.89, `刚写下时应该是 0.9 左右，实际 ${today}`)
+  const after90 = effectiveConfidence(row, now + 90 * 86_400_000)
+  const expected = BELIEF_CONFIDENCE_FLOOR + (0.9 - BELIEF_CONFIDENCE_FLOOR) * 0.5
+  assert.ok(Math.abs(after90 - expected) < 0.02, `九十天后应该约 ${expected.toFixed(2)}，实际 ${after90.toFixed(2)}`)
+  const afterYear = effectiveConfidence(row, now + 365 * 86_400_000)
+  assert.ok(afterYear > BELIEF_CONFIDENCE_FLOOR && afterYear < after90, '一年后更淡，但不低于地板')
+  done(ctx)
+})
+
+test('候选不算认知：默认列表里看不到 pending，退休全开也不带出来', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  const kept = rememberBelief(ctx.db, { claim: '他喜欢夜里听雨' }, now)
+  const cand = rememberBelief(ctx.db, { claim: '他讨厌被夸' }, now + 1)
+  setBeliefStatus(ctx.db, cand.id, 'pending', now + 2)
+  assert.deepEqual(listBeliefs(ctx.db, { limit: 10 }).map((r) => r.id), [kept.id])
+  assert.equal(listBeliefs(ctx.db, { limit: 10, includePending: true }).length, 2)
+  assert.equal(listBeliefs(ctx.db, { limit: 10, includeRetired: true }).length, 1)
+  done(ctx)
+})
+
+test('重新承认一条存疑的认知，新鲜度从今天重算', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  const r = rememberBelief(ctx.db, { claim: '他不喜欢被催', confidence: 0.9 }, now)
+  setBeliefStatus(ctx.db, r.id, 'contested', now + 1)
+  const later = now + 100 * 86_400_000
+  const before = effectiveConfidence(getBelief(ctx.db, r.id), later)
+  setBeliefStatus(ctx.db, r.id, 'active', later)
+  const after = effectiveConfidence(getBelief(ctx.db, r.id), later)
+  assert.ok(after > before, `重新承认后应该回升：前 ${before.toFixed(2)}，后 ${after.toFixed(2)}`)
   done(ctx)
 })

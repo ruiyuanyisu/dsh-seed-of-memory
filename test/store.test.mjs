@@ -578,3 +578,37 @@ test('setMute 传 0、负数、NaN、过去的时间，都等于「不挡了」'
   done(ctx)
 })
 
+
+test('人格层剩不下几个字的地方，不硬塞半句残桩', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  ctx.store.remember({ layer: 'persona', text: '我'.repeat(119), source: 'user-said', now: now - 1000 })
+  const cut = ctx.store.remember({
+    layer: 'persona',
+    text: '说话调调＝学他的口气：短句，句尾挂「咯」「啦」「嘿嘿」，带点赖，说完像回头看他一眼。',
+    source: 'user-said',
+    now: now - 2000,
+  })
+  ctx.store.remember({ layer: 'episodic', text: '他喜欢夜里听雨', source: 'user-said', now: now - 3000 })
+  const card = ctx.store.card({ budget: 2000 })
+  const personaLines = card.text.split('\n').filter((line) => line.startsWith('你是：'))
+  assert.equal(personaLines.length, 1, '只留塞得下的那一条')
+  assert.ok(!card.text.includes('你是：说'), '不许剩一个字的残桩')
+  assert.ok(!card.ids.includes(cut.id), '被截成一个字的那条干脆不上卡')
+  assert.match(card.text, /他喜欢夜里听雨/, '后面的「最近」不受影响')
+  done(ctx)
+})
+
+test('预算用完时不留一个空标题在卡片尾巴上', () => {
+  const ctx = fresh()
+  const now = Date.now()
+  ctx.store.remember({ layer: 'persona', text: '我'.repeat(100), source: 'user-said', now: now - 4000 })
+  ctx.store.remember({ layer: 'semantic', text: '他说过会亲口讲故事给我听', source: 'user-said', now: now - 3000 })
+  ctx.store.remember({ layer: 'episodic', text: '昨天他把话说软了一点', source: 'user-said', now: now - 2000 })
+  const small = ctx.store.card({ budget: 200 }).text
+  assert.ok(!/最近：\s*$/.test(small), '挑不到就别写标题：' + small)
+  assert.ok(!/记得：\s*$/.test(small), '记得也不许空挂着')
+  const big = ctx.store.card({ budget: 2000 }).text
+  assert.match(big, /最近：\n- /, '放得下的时候标题和内容一起在')
+  done(ctx)
+})

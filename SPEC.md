@@ -460,6 +460,51 @@ embeddings(ref_type, ref_id, model_space, dim, vec BLOB, text_hash, created_at)
 - 路由：`GET/POST /qq/proactive`（读/改配置）、`POST /qq/proactive/once`（强制发一句）。都走同源鉴权。
 - 边界：不写记忆、不改心情与情感；主动消息只是一句话，不触发反思与捕获。`lastUserAt` 由 `QqChannel.lastInboundAt` 提供，进程重启后从状态文件兜底。
 
+## 27.1 说之前先判一遍（v1.5.12）
+
+**动机**：`planProactive` 只回答「有没有开口的由头」，`proactiveText` 只回答「怎么把话说出来」，
+至于「此刻说这件事合不合适」没人判断——于是会出现把记忆当进度念（「今天有件小事…正式发布」）、
+同一句隔半小时发两遍、心里不轻松还硬说「今天挺开心」。判断单独成一层，和「说什么」分开。
+
+- 纯函数在 `lib/qq/judge.js`：
+  - `JUDGE_DEFAULTS = { minScore: 0.58, maxChars: 120, freshDays: 3, staleDays: 14 }`。
+  - `judgeUtterance({ text, kind, seed, seedAt, seedScope, scope, recent, qing, config, now, lastAt, lastUserAt, dayCount, hoursSinceUser })`。
+  - **硬闸**（任何一条不过就 `speak: false`，`reason` 就是那条的原因）：
+    `content`（有能出口的中文）→ `quiet`（安静时段）→ `quota`（当天次数上限）→ `interval`（距上次主动太近）
+    → `repeat`（24 小时内像到 0.8）→ `privacy`（引子的档不是 `shared`/自己这一档）。
+  - **软分**（加权平均，0–1）：`kind` 基准 0.9；`seed` 有没有具体的事 0.8；
+    `fresh` 引子新旧（≤3 天 0.92、≤14 天 0.7、更旧 0.4；分享类权重 0.8，其余 0.3）；
+    `broadcast` 播报腔 1.1；`hook` 留没留话头 0.6；`length` 0.35；`tone` 语气合不合此刻 0.7；
+    `gap` 隔了多久没说话 0.35；`hour` 深夜 0.2。
+  - **罚分**：播报腔 −0.3，语气不对（`glad` 而心情 <45、`worry` 而心情 ≥72）−0.3，再和 `minScore` 比。
+  - `pickBest(candidates, options)`：逐个判，只要 `speak` 的，取分最高的；全不合格就 `chosen: null`——**宁缺勿滥，不拿最不差的凑数**。
+  - `explainVerdict(verdict)`：一行话给日志和面板，`说（0.72）·有具体的事·留了话头` / `不说（安静时段）`。
+- 运行时接线（`lib/index.js`）：
+  - `memorySeedRows(scope, exclude, limit)` 取代原来的 `memorySeed` 内部实现，把 `recorded_at` 与 `scope` 一起带出来（判断要知道新旧与归属）；`memorySeed` 保留为只取一句话的兼容壳。
+  - `composeCandidates(...)`（`lib/qq/proactive.js`）一次给几个候选，每个带 `seed/seedAt/seedScope`；`composeProactive` 退化成「取第一个」，旧调用方不受影响。
+  - `proactiveTick` 先 `composeCandidates`（默认 5 个），再 `pickBest`；判不过就不发、写 `judge` 日志、把结果存进 `proactiveState.lastVerdict = { at, speak, score, reason, line }`，面板与 `/seed proactive` 看得到「上一次的判断」。
+  - `/seed proactive say`（force）只放开时机类硬闸（安静时段、次数、间隔），内容照判。
+- 边界：judge 不生成文案、不写记忆、不改心情；它只决定「这句现在说不说」。
+
+## 27.2 认知的生命周期（v1.5.13）
+
+**动机**：beliefs 以前只会往上爬（`MAX(confidence)`），说多少遍都不会淡；标了「存疑」的仍被语义检索当成事实捞出来；
+`seed_believe` 不带 scope（全落共用层），从记忆里长出来的候选连状态都没有。认知得和记忆一样，有来处、有新鲜度、有下场。
+
+- 存储（库 v15 → v16）：`beliefs` 增 `confirmed_at INTEGER`（最后一次被印证的时刻），`ADDED_COLUMNS` 负责补列，老行留空。
+- 新鲜度在**读时**算，不写库（`lib/beliefs.js`）：
+  - `BELIEF_HALF_LIFE_DAYS = 90`、`BELIEF_CONFIDENCE_FLOOR = 0.2`。
+  - `effectiveConfidence(row, now)`：`base = confidence`，锚点 `confirmed_at ?? updated_at ?? created_at`，
+    `eff = FLOOR + (base - FLOOR) * 0.5 ** (days / HALF_LIFE)`，夹在 0–1。淡到底也不归零，是「还记得，但没那么笃定」。
+  - `listBeliefs` 每行多带 `effective`，按它降序（并列看 `updated_at`）——排序看现在有多笃定，不看当初有多高。
+- 写入：同一 `fact_key` 或同一句话再记一遍时，`confidence = MIN(0.95, MAX(confidence, ?))` 且 `confirmed_at = now`（涨有顶、新鲜度重算）；INSERT 也写 `confirmed_at`。
+- 状态：`active` / `contested` / `pending` / `retired`。`pending` 是「从记忆里长出来的候选」，必须你点头才升 `active`；
+  默认 `listBeliefs` 不返回它，`/seed believe` 用 `includeContested` 把存疑的带出来，`includePending` 留给「候选」视图。
+  `setBeliefStatus` 变回 `active` 时刷新 `confirmed_at`（重新承认＝重新印证）。
+- 检索：语义索引只收 `status = 'active'`（`lib/semantic.js` 三处 SQL 同步）——标了存疑就不当事实用；面板改状态时同步 `indexOne` / `remove`。
+- 归属：`seed_believe` 与 HTTP `/believe` 跟着会话走（`scopeOfSession` → `qq:<号>` / `group:<群号>` / `gui`）；`seed_feel` 同理带 `slot`。
+- 边界：认知不参与情绪计算（`recordEmotion` 不看 beliefs），也不自动从记忆里长出来——那是下一版「长出候选」的事；这一版只把地基与可见性补齐。
+
 ## 28. 群聊判断与按心情潜水（v0.17）
 
 - 纯函数在 `lib/qq/group.js`：

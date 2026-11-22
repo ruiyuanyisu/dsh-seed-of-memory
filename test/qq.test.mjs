@@ -1,11 +1,11 @@
-﻿import test from 'node:test'
+import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { QqChannel, splitBubbles, splitOutsideQuotes, trimTailBubbles, voiceFallback, voiceCadence, samePath } from '../lib/qq/channel.js'
+import { QqChannel, splitBubbles, splitOutsideQuotes, trimTailBubbles, voiceFallback, voiceCadence, voiceWanted, shouldCarryVoice, samePath, silentFallbackFor } from '../lib/qq/channel.js'
 import { QqHistory } from '../lib/qq/history.js'
 import { ownerTarget } from '../lib/qq/proactive.js'
 import { segmentsOf, textOf, mentionedSelf, fallbackUserMessage, wantsVoice } from '../lib/qq/message.js'
@@ -1221,4 +1221,96 @@ test('重启之后也认得出这个会话是谁的：id 里缝着号，账本�
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('要不要念这一条：off 连他要求也不念，manual 只有他要求才念', () => {
+  assert.equal(voiceWanted({ mode: 'off', forced: true }), false, 'off 就是彻底静音')
+  assert.equal(voiceWanted({ mode: 'manual', forced: true }), true, 'manual：他要听就念')
+  assert.equal(voiceWanted({ mode: 'manual', forced: false, turns: 3, every: 3 }), false, 'manual：不主动念')
+  assert.equal(voiceWanted({ mode: 'ask' }), false, 'ask 是 manual 的别名')
+  assert.equal(voiceWanted({ mode: 'auto', forced: true }), true, 'auto 下他要求也念')
+  assert.equal(voiceWanted({ mode: 'auto', turns: 2, every: 3 }), false)
+  assert.equal(voiceWanted({ mode: 'auto', turns: 3, every: 3 }), true)
+  assert.equal(voiceWanted({ mode: 'always', turns: 1 }), true)
+})
+test('写了 [语音] 那行也要守节奏：不是写了就一定念', () => {
+  // 正文写事、末行写耳朵听的那句 —— 模型每轮都写，也只在轮到它的那几轮才出声。
+  const say = '[语音]好啦好啦，别担心啦。'
+  assert.equal(shouldCarryVoice({ mode: 'auto', turns: 1, every: 3, text: say, relaxed: true }), false)
+  assert.equal(shouldCarryVoice({ mode: 'auto', turns: 3, every: 3, text: say, relaxed: true }), true)
+  // 他明说要听：不受节奏管
+  assert.equal(shouldCarryVoice({ mode: 'manual', forced: true, turns: 1, every: 3, text: say, relaxed: true }), true)
+  // manual 下没说就不念；off 下他要求也不念
+  assert.equal(shouldCarryVoice({ mode: 'manual', turns: 3, every: 3, text: say, relaxed: true }), false)
+  assert.equal(shouldCarryVoice({ mode: 'off', forced: true, turns: 3, every: 3, text: say, relaxed: true }), false)
+  // 代码和链接念出来没意义
+  assert.equal(shouldCarryVoice({ mode: 'always', turns: 1, text: '看这里 https://example.com', relaxed: true }), false)
+  // 专门给耳朵写的那句可以长一点（正文还是按 voiceMaxChars 卡）
+  const long = '这是一句专门说给耳朵听的话，比正文长一些但是仍然自然，差不多六十个字左右的样子，念出来也不别扭。'
+  assert.equal(shouldCarryVoice({ mode: 'always', turns: 1, text: long, maxChars: 30, relaxed: true }), true)
+  assert.equal(shouldCarryVoice({ mode: 'always', turns: 1, text: long, maxChars: 30, relaxed: false }), false)
+})
+
+function groupEvent(id, text, { at = false, groupId = 123456, userId = 10002, card = '张三' } = {}) {
+  const message = at
+    ? [
+        { type: 'at', data: { qq: '10000' } },
+        { type: 'text', data: { text: ` ${text}` } },
+      ]
+    : [{ type: 'text', data: { text } }]
+  return {
+    post_type: 'message',
+    message_type: 'group',
+    self_id: 10000,
+    group_id: groupId,
+    user_id: userId,
+    sender: { user_id: userId, card },
+    message_id: id,
+    message,
+  }
+}
+
+test('群里没点到我，一句都不接：勾了「只接点我的」以后，兴趣词也不管用', async () => {
+  const logs = []
+  const agents = fakeAgents({ reply: '在的。' })
+  const { channel, client } = makeChannel({
+    agents,
+    onLog: (line) => logs.push(line),
+    config: { groupRequireAt: true, groupPolicy: 'smart', debounceMs: 0 },
+  })
+  await channel.start()
+  // 「AI 模型」是兴趣词，聪明模式本来会自己接一句
+  await channel.handleEvent(groupEvent(1, '这个 AI 模型怎么选'))
+  assert.equal(client.calls.filter((c) => c.action === 'send_group_msg').length, 0, '没 @ 我，不该回')
+  assert.ok(logs.some((line) => line.kind === 'lurk' && /没 @ 我/.test(line.text)), '该记一句潜水原因')
+
+  // @ 了我才接
+  await channel.handleEvent(groupEvent(2, '这个 AI 模型怎么选，阿鱼你说呢', { at: true }))
+  assert.equal(client.calls.filter((c) => c.action === 'send_group_msg').length, 1, '@ 了就该回')
+  channel.stop()
+})
+
+test('「只在 @ 我时回」那一档，就算勾掉「只接点我的」也得 @ 才回', async () => {
+  const { channel, client } = makeChannel({
+    agents: fakeAgents({ reply: '在的。' }),
+    config: { groupRequireAt: false, groupPolicy: 'at', debounceMs: 0 },
+  })
+  await channel.start()
+  await channel.handleEvent(groupEvent(3, '随便聊聊'))
+  assert.equal(client.calls.filter((c) => c.action === 'send_group_msg').length, 0, '选了只回 @ 就不该接闲聊')
+  channel.stop()
+})
+
+test('兜底那句不连着说两遍', async () => {
+  const record = {}
+  const first = silentFallbackFor(record)
+  record.lastSilent = first
+  const second = silentFallbackFor(record)
+  assert.notEqual(second, first, '连着两条一样的话，看起来像卡住了')
+  record.lastSilent = second
+  const third = silentFallbackFor(record)
+  assert.notEqual(third, second)
+  record.lastSilent = third
+  const fourth = silentFallbackFor(record)
+  assert.notEqual(fourth, third)
 })
